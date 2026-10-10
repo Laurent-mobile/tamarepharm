@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Système de Gestion de Pharmacie</title>
+    
+    <!-- Désactiver les analytics en développement -->
+    <script>
+      // Bloquer les requêtes analytics en développement
+      if (window.location.hostname === 'localhost' || window.location.hostname.includes('bolt.new')) {
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({
+          'gtm.blocklist': ['google', 'facebook', 'tiktok']
+        });
+        
+        // Désactiver Google Analytics
+        window['ga-disable-G-SLJ4P1NJFR'] = true;
+        
+        // Désactiver Facebook Pixel
+        window.fbq = function() { console.log('Facebook Pixel bloqué'); };
+      }
+    </script>
+    
+    <style>
+      /* Styles de base pour éviter le FOUC */
+      body { 
+        margin: 0; 
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background-color: #f8fafc;
+      }
+      #root { 
+        min-height: 100vh; 
+      }
+      
+      /* Loading state */
+      .loading-spinner {
+        border: 3px solid #f3f4f6;
+        border-top: 3px solid #10b981;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 2rem auto;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Fallback loading -->
+      <div style="display: flex; justify-content: center; align-items: center; height: 100vh;">
+        <div class="loading-spinner"></div>
+      </div>
+    </div>
+    
+    <!-- Script principal -->
+    <script type="module" src="/src/main.tsx" crossorigin="anonymous"></script>
+    
+    <!-- Script pour gérer les erreurs globales -->
+    <script>
+      // Gestionnaire d'erreurs global
+      window.addEventListener('error', function(e) {
+        // Ignorer les erreurs de réseau et rate limiting
+        if (e.message.includes('Failed to fetch') || 
+            e.message.includes('net::') ||
+            e.message.includes('rate limit') ||
+            e.message.includes('429')) {
+          e.preventDefault();
+          console.warn('Erreur réseau ignorée:', e.message);
+          return false;
+        }
+      });
+      
+      // Gestionnaire pour les promesses rejetées
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e.reason && (
+            e.reason.message?.includes('Failed to fetch') ||
+            e.reason.message?.includes('net::') ||
+            e.reason.message?.includes('rate limit') ||
+            e.reason.status === 429
+        )) {
+          e.preventDefault();
+          console.warn('Promesse rejetée ignorée:', e.reason);
+          return false;
+        }
+      });
+    </script>
+  </body>
+</html>
