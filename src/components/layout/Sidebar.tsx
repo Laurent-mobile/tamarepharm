@@ -1,4 +1,4 @@
-// components/layout/Sidebar.tsx
+// src/components/layout/Sidebar.tsx
 import {
   LayoutDashboard,
   Package,
@@ -14,7 +14,8 @@ import {
   Settings,
   Activity,
   Shield,
-  CreditCard // Ajouter l'icône pour le caissier
+  CreditCard,
+  Wallet // ✅ Ajout de l'icône pour les comptes/dépôts
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -35,11 +36,11 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
     { id: 'produits', label: 'Produits', icon: Package },
     { id: 'stock', label: 'Stock', icon: Building2 },
     { id: 'clients', label: 'Clients', icon: Users },
+    { id: 'comptes-clients', label: 'Comptes & Dépôts', icon: Wallet }, // ✅ NOUVEAU MENU
     { id: 'fournisseurs', label: 'Fournisseurs', icon: UserCog },
     { id: 'commandes', label: 'Commandes', icon: Truck },
     { id: 'transferts', label: 'Transferts', icon: ArrowLeftRight },
     { id: 'inventaires', label: 'Inventaires', icon: ClipboardList },
-    
     { id: 'parametres', label: 'Paramètres', icon: Settings },
   ];
 
@@ -95,4 +96,3 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
     </div>
   );
 }
-

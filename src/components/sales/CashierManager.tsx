@@ -324,38 +324,81 @@ export function CashierManager({ sessionCaisse, onVenteFinalisee }: CashierManag
                 ))}
               </div>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <h5 className="font-bold text-blue-900 mb-3 flex items-center gap-2"><Calculator className="w-4 h-4" /> Encaissement</h5>
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">Total à payer:</span>
-                    <span className="font-bold text-lg">{venteEnCours.vente.montant_patient.toLocaleString('fr-FR')} F</span>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Montant perçu (FCFA):</label>
-                    <input
-                      type="number"
-                      value={montantPerçu}
-                      onChange={(e) => setMontantPerçu(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
-                      placeholder="Saisir le montant perçu"
-                      autoFocus
-                    />
-                  </div>
-                  {monnaieRendue > 0 && (
-                    <div className="flex justify-between items-center p-2 bg-green-100 rounded">
-                      <span className="font-medium text-green-800">Monnaie à rendre:</span>
-                      <span className="font-bold text-green-800">{monnaieRendue.toLocaleString('fr-FR')} F</span>
-                    </div>
-                  )}
-                  {montantPerçu && parseFloat(montantPerçu) < venteEnCours.vente.montant_patient && (
-                    <div className="flex justify-between items-center p-2 bg-red-100 rounded">
-                      <span className="font-medium text-red-800">Montant insuffisant:</span>
-                      <span className="font-bold text-red-800">{(venteEnCours.vente.montant_patient - parseFloat(montantPerçu)).toLocaleString('fr-FR')} F</span>
-                    </div>
-                  )}
-                </div>
-              </div>
+
+<div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+  <h5 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
+    <Calculator className="w-4 h-4" /> Encaissement
+  </h5>
+  <div className="space-y-3">
+    {/* ✅ AFFICHAGE DÉTAILLÉ DES MONTANTS */}
+    <div className="space-y-2 text-sm">
+      <div className="flex justify-between items-center p-2 bg-white rounded">
+        <span className="text-gray-600">Total produits:</span>
+        <span className="font-medium">{venteEnCours.vente.montant_total.toLocaleString('fr-FR')} F</span>
+      </div>
+      
+      {venteEnCours.vente.montant_assurance > 0 && (
+        <div className="flex justify-between items-center p-2 bg-blue-100 rounded">
+          <span className="text-blue-700">Part assurance:</span>
+          <span className="font-medium text-blue-700">- {venteEnCours.vente.montant_assurance.toLocaleString('fr-FR')} F</span>
+        </div>
+      )}
+      
+      {venteEnCours.vente.montant_paye_comptant > 0 && (
+        <div className="flex justify-between items-center p-2 bg-green-100 rounded">
+          <span className="text-green-700">Déjà payé (reliquat):</span>
+          <span className="font-medium text-green-700">- {venteEnCours.vente.montant_paye_comptant.toLocaleString('fr-FR')} F</span>
+        </div>
+      )}
+      
+      {venteEnCours.vente.montant_credit > 0 && (
+        <div className="flex justify-between items-center p-2 bg-amber-100 rounded">
+          <span className="text-amber-700">En crédit:</span>
+          <span className="font-medium text-amber-700">{venteEnCours.vente.montant_credit.toLocaleString('fr-FR')} F</span>
+        </div>
+      )}
+      
+      <div className="border-t-2 border-blue-300 pt-2 mt-2">
+        <div className="flex justify-between items-center">
+          <span className="font-bold text-lg text-blue-900">Reste à payer:</span>
+          <span className="font-bold text-2xl text-blue-700">
+            {venteEnCours.vente.montant_patient.toLocaleString('fr-FR')} F
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        Montant perçu (FCFA):
+      </label>
+      <input
+        type="number"
+        value={montantPerçu}
+        onChange={(e) => setMontantPerçu(e.target.value)}
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-lg font-semibold"
+        placeholder="Saisir le montant perçu"
+        autoFocus
+      />
+    </div>
+    
+    {monnaieRendue > 0 && (
+      <div className="flex justify-between items-center p-3 bg-green-100 rounded-lg border border-green-300">
+        <span className="font-bold text-green-800">💵 Monnaie à rendre:</span>
+        <span className="font-bold text-xl text-green-800">{monnaieRendue.toLocaleString('fr-FR')} F</span>
+      </div>
+    )}
+    
+    {montantPerçu && parseFloat(montantPerçu) < venteEnCours.vente.montant_patient && (
+      <div className="flex justify-between items-center p-3 bg-red-100 rounded-lg border border-red-300">
+        <span className="font-bold text-red-800">⚠️ Montant insuffisant:</span>
+        <span className="font-bold text-red-800">
+          {-(venteEnCours.vente.montant_patient - parseFloat(montantPerçu)).toLocaleString('fr-FR')} F
+        </span>
+      </div>
+    )}
+  </div>
+</div>
 
               <div className="flex gap-3">
                 <button onClick={annulerPaiement} disabled={loading} className="flex-1 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition disabled:opacity-50">Annuler</button>

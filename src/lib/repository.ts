@@ -399,6 +399,171 @@ export const repository = {
     }
   },
 
+    // ═══════════════════════════════════════
+  // GESTION DES COMPTES CLIENTS (AVOIR / CRÉDIT BON)
+  // ═══════════════════════════════════════
+  
+  async getCompteClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon') {
+    return await localDb.comptes_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(c => c.client_id === clientId && c.type_compte === typeCompte)
+      .first();
+  },
+
+  async enregistrerDepotClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon', montant: number, societeReference?: string, description?: string) {
+    const now = new Date().toISOString();
+    
+    // 1. Trouver ou créer le compte
+    let compte = await this.getCompteClient(pharmacyId, clientId, typeCompte);
+    if (!compte) {
+      const nouveauCompteId = uuidv4();
+      compte = {
+        id: nouveauCompteId,
+        pharmacy_id: pharmacyId,
+        client_id: clientId,
+        type_compte: typeCompte,
+        solde_actuel: 0,
+        societe_reference: societeReference || null,
+        created_at: now,
+        updated_at: now,
+        _sync_status: 'pending_create'
+      };
+      await localDb.comptes_clients.add(compte);
+    }
+
+    // 2. Mettre à jour le solde
+    const nouveauSolde = compte.solde_actuel + montant;
+    await localDb.comptes_clients.update(compte.id, { 
+      solde_actuel: nouveauSolde, 
+      updated_at: now,
+      _sync_status: 'pending_update'
+    });
+
+    // 3. Enregistrer l'historique
+    const historiqueId = uuidv4();
+    await localDb.historique_consommation_compte.add({
+      id: historiqueId,
+      compte_id: compte.id,
+      type_operation: 'depot',
+      montant: montant,
+      solde_apres_operation: nouveauSolde,
+      date_operation: now,
+      description: description || 'Dépôt espèces',
+      _sync_status: 'pending_create'
+    });
+    
+    // 4. Log pour synchronisation Supabase
+    await syncEngine.logOperation('comptes_clients', compte.id, 'update', { solde_actuel: nouveauSolde });
+    await syncEngine.logOperation('historique_consommation_compte', historiqueId, 'create', { compte_id: compte.id, montant, type_operation: 'depot' });
+
+    return nouveauSolde;
+  },
+
+  async consommerSoldeClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon', montantConsomme: number, venteId: string) {
+    const compte = await this.getCompteClient(pharmacyId, clientId, typeCompte);
+
+    if (!compte || compte.solde_actuel < montantConsomme) {
+      throw new Error(`Solde insuffisant. Disponible: ${compte?.solde_actuel || 0} F`);
+    }
+
+    const now = new Date().toISOString();
+    const nouveauSolde = compte.solde_actuel - montantConsomme;
+
+    await localDb.comptes_clients.update(compte.id, {
+      solde_actuel: nouveauSolde,
+      updated_at: now,
+      _sync_status: 'pending_update'
+    });
+
+    const historiqueId = uuidv4();
+    await localDb.historique_consommation_compte.add({
+      id: historiqueId,
+      compte_id: compte.id,
+      vente_id: venteId,
+      type_operation: 'consommation',
+      montant: montantConsomme,
+      solde_apres_operation: nouveauSolde,
+      date_operation: now,
+      description: `Consommation via vente`,
+      _sync_status: 'pending_create'
+    });
+
+    await syncEngine.logOperation('comptes_clients', compte.id, 'update', { solde_actuel: nouveauSolde });
+    await syncEngine.logOperation('historique_consommation_compte', historiqueId, 'create', { compte_id: compte.id, montant: montantConsomme, type_operation: 'consommation' });
+
+    return nouveauSolde;
+  },
+
+    async getAllComptesClients(pharmacyId: string) {
+    return await localDb.comptes_clients
+      .where('pharmacy_id')
+      .equals(pharmacyId)
+      .and(c => c.solde_actuel > 0 || c.type_compte === 'avoir') // On affiche tout, même si solde 0 pour avoir
+      .toArray();
+  },
+
+  async getHistoriqueCompte(compteId: string) {
+    return await localDb.historique_consommation_compte
+      .where('compte_id')
+      .equals(compteId)
+      .reverse()
+      .sortBy('date_operation');
+  },
+
+  // Récupérer tous les clients pour les lier aux comptes
+  async getAllClientsForAccounts(pharmacyId: string) {
+    return await localDb.clients.where('pharmacy_id').equals(pharmacyId).toArray();
+  },
+
+  // ═══════════════════════════════════════
+  // PROFORMA (NE DÉSTOCKE PAS)
+  // ═══════════════════════════════════════
+  async createProforma(data: any, lignes: any[]) {
+    const proformaId = data.id || uuidv4();
+    const now = new Date().toISOString();
+
+    const proforma = { 
+      ...data, 
+      id: proformaId, 
+      created_at: now, 
+      updated_at: now, 
+      statut: 'brouillon',
+      _sync_status: 'pending_create' as const 
+    };
+    
+    // 1. Sauvegarder l'en-tête du proforma
+    await localDb.demandes_proforma.add(proforma);
+    await syncEngine.logOperation('demandes_proforma', proformaId, 'create', proforma);
+
+    // 2. Sauvegarder les lignes (SANS appeler decrementerStock)
+    for (const ligne of lignes) {
+      const ligneId = ligne.id || uuidv4();
+      const proformaLigne = { 
+        ...ligne, 
+        id: ligneId, 
+        demande_id: proformaId, 
+        _sync_status: 'pending_create' as const 
+      };
+      await localDb.demandes_proforma_lignes.add(proformaLigne);
+      await syncEngine.logOperation('demandes_proforma_lignes', ligneId, 'create', proformaLigne);
+    }
+
+    return proforma;
+  },
+
+  async transformerProformaEnVente(proformaId: string, venteData: any, lignesVente: any[]) {
+    // 1. Marquer le proforma comme transformé
+    await localDb.demandes_proforma.update(proformaId, { 
+      statut: 'transformee',
+      updated_at: new Date().toISOString(),
+      _sync_status: 'pending_update'
+    });
+    await syncEngine.logOperation('demandes_proforma', proformaId, 'update', { statut: 'transformee' });
+
+    // 2. Créer la vente (CETTE FONCTION APPELLE decrementerStock en interne)
+    return await this.createVente(venteData, lignesVente);
+  },
+
   // ═══════════════════════════════════════
   // SYNC UTILITAIRES
   // ═══════════════════════════════════════

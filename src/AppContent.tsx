@@ -1,4 +1,4 @@
-// src/AppContent.tsx - VERSION AMÉLIORÉE
+// src/AppContent.tsx - VERSION PLEIN ÉCRAN
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './contexts/AuthContext';
 import { LoginForm } from './components/auth/LoginForm';
@@ -16,25 +16,22 @@ import { SettingsManager } from './components/settings/SettingsManager';
 import { AssurancePaymentsManager } from './components/assurances/AssurancePaymentsManager';
 import { CashierMenu } from './components/cashier/CashierMenu';
 import { StockTabs } from './components/stock/StockTabs';
+import { ComptesClientsManager } from './components/clients/ComptesClientsManager';
 
 export function AppContent() {
   const { user, utilisateur, loading, error, signOut, retryLoadUser, refreshSession, dataVersion, refreshData } = useAuth();
   const [activeSection, setActiveSection] = useState('dashboard');
   const [appError, setAppError] = useState<string | null>(null);
 
-  // Utiliser useCallback pour éviter les rendus inutiles
   const handleSectionChange = useCallback((section: string) => {
     console.log('🎯 Changement de section:', section);
     setActiveSection(section);
   }, []);
 
-  // Effet simplifié pour dataVersion
   useEffect(() => {
     console.log('🔄 AppContent - dataVersion changée:', dataVersion);
-    // Les composants enfants réagiront à dataVersion via leurs propres effets
   }, [dataVersion]);
 
-  // Debug logs conditionnels
   useEffect(() => {
     if (process.env.NODE_ENV === 'development') {
       console.log('🔄 AppContent State:', {
@@ -52,89 +49,45 @@ export function AppContent() {
     }
   }, [user, utilisateur, loading, activeSection, error, dataVersion]);
 
-  // État problématique
   useEffect(() => {
     if (user && !utilisateur && !loading) {
       console.warn('⚠️ État problématique: user mais pas utilisateur, et loading=false');
     }
   }, [user, utilisateur, loading, error]);
 
-  // Rediriger les caissiers
   if (utilisateur?.role === 'caissier') {
     return <CashierMenu />;
   }
 
-  // Système de permissions avec useCallback
   const canAccessSection = useCallback((section: string): boolean => {
     if (!utilisateur) return false;
 
     const permissions = {
       admin: {
-        dashboard: true,
-        produits: true,
-        stock: true,
-        ventes: true,
-        caissier: true,
-        'historique-ventes': true,
-        'paiements-assurances': true,
-        clients: true,
-        fournisseurs: true,
-        commandes: true,
-        transferts: true,
-        inventaires: true,
-        parametres: true
+        dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
+        'historique-ventes': true, 'paiements-assurances': true, clients: true,'comptes-clients': true,
+        fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: true
       },
       pharmacien: {
-        dashboard: true,
-        produits: true,
-        stock: true,
-        ventes: true,
-        caissier: true,
-        'historique-ventes': true,
-        'paiements-assurances': true,
-        clients: true,
-        fournisseurs: true,
-        commandes: true,
-        transferts: true,
-        inventaires: true,
-        parametres: false
+        dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
+        'historique-ventes': true, 'paiements-assurances': true, clients: true,
+        fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: false
       },
       vendeur: {
-        dashboard: true,
-        produits: true,
-        stock: true,
-        ventes: true,
-        caissier: false,
-        'historique-ventes': true,
-        'paiements-assurances': false,
-        clients: true,
-        fournisseurs: false,
-        commandes: false,
-        transferts: false,
-        inventaires: false,
-        parametres: false
+        dashboard: true, produits: true, stock: true, ventes: true, caissier: false,
+        'historique-ventes': true, 'paiements-assurances': false, clients: true,'comptes-clients': false,
+        fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
       },
       caissier: {
-        dashboard: true,
-        produits: false,
-        stock: false,
-        ventes: false,
-        caissier: true,
-        'historique-ventes': true,
-        'paiements-assurances': false,
-        clients: false,
-        fournisseurs: false,
-        commandes: false,
-        transferts: false,
-        inventaires: false,
-        parametres: false
+        dashboard: true, produits: false, stock: false, ventes: false, caissier: true,
+        'historique-ventes': true, 'paiements-assurances': false, clients: false,'comptes-clients': true,
+        fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
       },
     };
 
     return permissions[utilisateur.role]?.[section] || false;
   }, [utilisateur]);
 
-  // Rendu conditionnel
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -144,10 +97,7 @@ export function AppContent() {
           {error && (
             <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg max-w-md mx-auto">
               <p className="text-red-700 text-sm">{error}</p>
-              <button
-                onClick={refreshSession}
-                className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-xs"
-              >
+              <button onClick={refreshSession} className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-xs">
                 Rafraîchir
               </button>
             </div>
@@ -178,22 +128,13 @@ export function AppContent() {
               {error || 'Votre compte est connecté mais le profil n\'est pas encore chargé.'}
             </p>
             <div className="space-y-2">
-              <button
-                onClick={retryLoadUser}
-                className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
-              >
+              <button onClick={retryLoadUser} className="w-full px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors">
                 {error ? 'Réessayer le chargement' : 'Actualiser le profil'}
               </button>
-              <button
-                onClick={() => window.location.reload()}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
+              <button onClick={() => window.location.reload()} className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                 Recharger la page
               </button>
-              <button
-                onClick={signOut}
-                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
+              <button onClick={signOut} className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">
                 Se déconnecter
               </button>
             </div>
@@ -217,13 +158,8 @@ export function AppContent() {
                 </svg>
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">Accès non autorisé</h3>
-              <p className="text-gray-600">
-                Vous n'avez pas les permissions nécessaires pour accéder à cette section.
-              </p>
-              <button
-                onClick={() => setActiveSection('dashboard')}
-                className="mt-4 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors"
-              >
+              <p className="text-gray-600">Vous n'avez pas les permissions nécessaires pour accéder à cette section.</p>
+              <button onClick={() => setActiveSection('dashboard')} className="mt-4 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors">
                 Retour au tableau de bord
               </button>
             </div>
@@ -232,40 +168,27 @@ export function AppContent() {
       }
       
       switch (activeSection) {
-        case 'dashboard':
-          return <Dashboard />;
-        case 'produits':
-          return <ProductsManager />;
-        case 'stock':
-          return <StockTabs />;
-        case 'ventes':
-          return <SalesManager />;
-        case 'caissier':
-          return <CashierMenu />;
-        case 'historique-ventes':
-          return <SalesHistory />;
-        case 'paiements-assurances':
-          return <AssurancePaymentsManager />;
-        case 'clients':
-          return <ClientsManager />;
-        case 'fournisseurs':
-          return <SuppliersManager />;
-        case 'commandes':
-          return <OrdersManager />;
-        case 'transferts':
-          return <TransfersManager />;
-        case 'inventaires':
-          return <InventoryManager />;
-        case 'parametres':
-          return <SettingsManager />;
-        default:
-          return <Dashboard />;
+        case 'dashboard': return <Dashboard />;
+        case 'produits': return <ProductsManager />;
+        case 'stock': return <StockTabs />;
+        case 'ventes': return <SalesManager />;
+        case 'caissier': return <CashierMenu />;
+        case 'historique-ventes': return <SalesHistory />;
+        case 'paiements-assurances': return <AssurancePaymentsManager />;
+        case 'clients': return <ClientsManager />;
+        case 'comptes-clients':return <ComptesClientsManager />;
+        case 'fournisseurs': return <SuppliersManager />;
+        case 'commandes': return <OrdersManager />;
+        case 'transferts': return <TransfersManager />;
+        case 'inventaires': return <InventoryManager />;
+        case 'parametres': return <SettingsManager />;
+        default: return <Dashboard />;
       }
     } catch (err: any) {
       console.error('❌ Erreur rendu section:', err);
       setAppError(err.message);
       return (
-        <div className="p-6 bg-red-50 border border-red-200 rounded-lg">
+        <div className="p-6 bg-red-50 border border-red-200 rounded-lg w-full">
           <div className="flex items-start">
             <div className="flex-shrink-0">
               <svg className="w-5 h-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
@@ -276,18 +199,8 @@ export function AppContent() {
               <h3 className="text-red-800 font-bold">Erreur d'application</h3>
               <p className="text-red-600 mt-1">{err.message}</p>
               <div className="mt-4 flex space-x-3">
-                <button
-                  onClick={() => setAppError(null)}
-                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-                >
-                  Fermer
-                </button>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-                >
-                  Recharger
-                </button>
+                <button onClick={() => setAppError(null)} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Fermer</button>
+                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors">Recharger</button>
               </div>
             </div>
           </div>
@@ -297,16 +210,19 @@ export function AppContent() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50">
+    // ✅ AJOUT DE w-full ET overflow-hidden POUR ÉVITER LES DÉBORDEMENTS
+    <div className="flex h-screen bg-gray-50 w-full overflow-hidden">
       <Sidebar 
         activeSection={activeSection} 
         onSectionChange={handleSectionChange}
         user={utilisateur!}
       />
       
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-8">
-          <div className="mb-6 flex justify-between items-center">
+      {/* ✅ MODIFICATION ICI : w-full au lieu de max-w-7xl mx-auto */}
+      <main className="flex-1 overflow-y-auto w-full bg-gray-50">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
+          
+          <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">
                 {getSectionTitle(activeSection)}
@@ -315,11 +231,11 @@ export function AppContent() {
                 {getSectionDescription(activeSection)}
               </p>
             </div>
-            <div className="text-right text-sm text-gray-500">
-              <div className="flex items-center space-x-4">
+            <div className="text-right text-sm text-gray-500 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
                 <button
                   onClick={refreshData}
-                  className="px-3 py-1 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 transition-colors flex items-center"
+                  className="px-3 py-1 bg-emerald-600 text-white rounded text-sm hover:bg-emerald-700 transition-colors flex items-center w-full sm:w-auto justify-center"
                   title="Rafraîchir toutes les données"
                 >
                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -336,7 +252,7 @@ export function AppContent() {
           </div>
 
           {(error || appError) && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg w-full">
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <h3 className="text-red-800 font-bold">
@@ -345,25 +261,12 @@ export function AppContent() {
                   <p className="text-red-600 mt-1">{error || appError}</p>
                   {error && (
                     <div className="mt-3 flex space-x-2">
-                      <button
-                        onClick={retryLoadUser}
-                        className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors"
-                      >
-                        Réessayer
-                      </button>
-                      <button
-                        onClick={refreshSession}
-                        className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors"
-                      >
-                        Rafraîchir
-                      </button>
+                      <button onClick={retryLoadUser} className="px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors">Réessayer</button>
+                      <button onClick={refreshSession} className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors">Rafraîchir</button>
                     </div>
                   )}
                 </div>
-                <button
-                  onClick={() => setAppError(null)}
-                  className="ml-4 flex-shrink-0 text-red-400 hover:text-red-500 transition-colors"
-                >
+                <button onClick={() => setAppError(null)} className="ml-4 flex-shrink-0 text-red-400 hover:text-red-500 transition-colors">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
@@ -379,7 +282,6 @@ export function AppContent() {
   );
 }
 
-// Fonctions helper (garder les mêmes)
 function getSectionTitle(section: string): string {
   const titles: { [key: string]: string } = {
     dashboard: 'Tableau de Bord',

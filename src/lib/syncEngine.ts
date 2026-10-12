@@ -13,15 +13,20 @@ const MAX_RETRIES = 5;
 const TABLE_MAPPING: Record<string, string> = {
   produits: 'produits',
   clients: 'clients',
-  assurances: 'assurances', // ✅ AJOUTÉ
+  assurances: 'assurances',
   ventes: 'ventes',
   vente_lignes: 'vente_lignes',
   stock: 'stock',
   fournisseurs: 'fournisseurs',
   commandes: 'commandes_fournisseurs',
   magasins: 'magasins',
-  transferts: 'transferts',           // ✅ AJOUTER
+  transferts: 'transferts',
   transfert_lignes: 'transfert_lignes',
+  // ✅ NOUVELLES TABLES AJOUTÉES
+  comptes_clients: 'comptes_clients',
+  historique_consommation_compte: 'historique_consommation_compte',
+  avoirs_clients: 'avoirs_clients',
+  credits_clients: 'credits_clients',
 };
 
 // ============================================
@@ -100,7 +105,6 @@ class SyncEngine {
 
   // ─── SYNCHRONISATION COMPLÈTE ───
   async syncAll(): Promise<SyncResult> {
-    // ✅ GARDE HORS-LIGNE : Ne pas essayer de synchroniser si pas de réseau
     if (!navigator.onLine) {
       console.log('📴 Synchronisation ignorée : Mode hors-ligne actif');
       return { success: false, message: 'Hors-ligne', synced: 0, failed: 0, pulled: 0, errors: [] };
@@ -177,12 +181,10 @@ class SyncEngine {
           continue;
         }
 
-        // ✅ 1. Nettoyer les champs spécifiques au local avant l'envoi
         const cleanData = { ...log.data };
         delete cleanData._sync_status;
         delete cleanData._local_id;
 
-        // ✅ 2. Utiliser 'syncError' pour éviter le conflit avec le 'error' du catch
         let syncError: any = null;
 
         switch (log.operation) {
@@ -197,9 +199,7 @@ class SyncEngine {
             break;
         }
 
-        // ✅ 3. Gestion intelligente des erreurs
         if (syncError) {
-          // Cas A : Violation de clé étrangère (ex: assurance_id n'existe pas encore)
           if (syncError.code === '23503' && cleanData.assurance_id) {
             console.warn(`⚠️ L'assurance assignée n'existe pas encore. Suppression de la référence pour permettre la sync.`);
             cleanData.assurance_id = null;
@@ -211,11 +211,9 @@ class SyncEngine {
               ({ error: retryError } = await supabase.from(supabaseTable).update(cleanData).eq('id', log.record_id));
             }
             
-            if (retryError) throw retryError; // Si ça échoue encore, on propage
+            if (retryError) throw retryError;
             console.log(`✅ Synchronisé avec succès (sans référence assurance)`);
-          } 
-          // Cas B : Violation d'unicité (ex: numéro d'assuré en double) - AMÉLIORATION UX
-          else if (syncError.code === '23505') {
+          } else if (syncError.code === '23505') {
             const match = syncError.message.match(/Key \(([^)]+)\)=\(([^)]+)\)/);
             const colonne = match ? match[1] : 'inconnue';
             const valeur = match ? match[2] : 'inconnue';
@@ -223,14 +221,12 @@ class SyncEngine {
             if (colonne === 'numero_assure' && log.table_name === 'clients') {
               console.warn(`⚠️ Doublon détecté : le numéro d'assuré "${valeur}" existe déjà`);
               
-              // Arrêter les tentatives et notifier l'utilisateur
               await localDb.sync_log.update(log.id, {
                 status: 'failed',
                 error_message: `Numéro d'assuré "${valeur}" déjà utilisé`,
-                retry_count: MAX_RETRIES, // Force l'arrêt des retries
+                retry_count: MAX_RETRIES,
               });
 
-              // Notification UX directe
               alert(
                 `⚠️ Synchronisation bloquée pour un client\n\n` +
                 `Le numéro d'assuré "${valeur}" est déjà utilisé par un autre client.\n` +
@@ -239,18 +235,15 @@ class SyncEngine {
 
               failed++;
               errors.push(`${log.table_name}/${log.record_id}: Doublon numero_assure "${valeur}"`);
-              continue; // Passer à l'opération suivante
+              continue;
             } else {
-              throw syncError; // Autre type d'unicité, on propage
+              throw syncError;
             }
-          } 
-          // Cas C : Toute autre erreur
-          else {
+          } else {
             throw syncError;
           }
         }
 
-        // ✅ 4. Marquer comme synchronisé
         await localDb.sync_log.update(log.id, {
           status: 'synced',
           synced_at: new Date().toISOString(),
@@ -287,8 +280,6 @@ class SyncEngine {
       return { pulled: 0, errors: [] };
     }
 
-     
-    // ✅ CORRECTION : Utilisation de 'pharmacyColumn' au lieu de 'hasPharmacy'
     const tablesToPull = [
       { local: 'produits', remote: 'produits', pharmacyColumn: 'pharmacy_id' },
       { local: 'clients', remote: 'clients', pharmacyColumn: 'pharmacy_id' },
@@ -297,16 +288,21 @@ class SyncEngine {
       { local: 'stock', remote: 'stock', pharmacyColumn: 'pharmacy_id' },
       { local: 'ventes', remote: 'ventes', pharmacyColumn: 'pharmacy_id' },
       { local: 'magasins', remote: 'magasins', pharmacyColumn: 'pharmacie_principale_id' },
-      { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' }, // ✅ AJOUTÉ
-  { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' }, // ✅ AJOUTÉ
-  { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' }, // ✅ NOM EXACT DE LA COLONNE
+      { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' },
+      { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' },
+      { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' },
+      // ✅ NOUVELLES TABLES AJOUTÉES AU PULL
+      { local: 'comptes_clients', remote: 'comptes_clients', pharmacyColumn: 'pharmacy_id' },
+      { local: 'avoirs_clients', remote: 'avoirs_clients', pharmacyColumn: 'pharmacy_id' },
+      { local: 'credits_clients', remote: 'credits_clients', pharmacyColumn: 'pharmacy_id' },
+      // Note: historique_consommation_compte n'a pas de pharmacy_id direct, il est lié via compte_id. 
+      // Il sera synchronisé via le PUSH local, ou peut être ajouté ici sans filtre pharmacyColumn si nécessaire.
     ];
 
     for (const table of tablesToPull) {
       try {
         let query = supabase.from(table.remote).select('*');
 
-        // ✅ Utilisation dynamique du nom de la colonne
         if (table.pharmacyColumn) {
           query = query.eq(table.pharmacyColumn, pharmacyId);
         }
