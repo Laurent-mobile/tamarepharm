@@ -53,7 +53,7 @@ export function OrdersManager() {
     try {
       setLoadingProformas(true);
       // ✅ LECTURE LOCALE (Fonctionne hors-ligne)
-      const data = await repository.getProformas(utilisateur.pharmacy_id);
+      const data = await repository.getProformasFournisseur(utilisateur!.pharmacy_id);
       setProformas(data || []);
     } catch (error) {
       console.error('❌ Erreur chargement proformas:', error);

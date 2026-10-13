@@ -230,7 +230,7 @@ export const repository = {
   },
 
   // ═══════════════════════════════════════
-  // FOURNISSEURS & COMMANDES (Version unique et nettoyée)
+  // FOURNISSEURS & COMMANDES
   // ═══════════════════════════════════════
   async getFournisseurs(pharmacyId: string) {
     return await localDb.fournisseurs.where('pharmacy_id').equals(pharmacyId).and(f => f.actif !== false).toArray();
@@ -280,15 +280,18 @@ export const repository = {
       for (const commande of commandes) {
         const lignes = await localDb.commande_fournisseur_lignes.where('commande_id').equals(commande.id).toArray();
         for (const ligne of lignes) {
-          const produit = await localDb.produits.get(ligne.produit_id);
-          (ligne as any).produits = produit;
+          if (ligne.produit_id && typeof ligne.produit_id === 'string') {
+            try { (ligne as any).produits = await localDb.produits.get(ligne.produit_id); } catch(e) { (ligne as any).produits = null; }
+          } else { (ligne as any).produits = null; }
         }
         (commande as any).commande_fournisseur_lignes = lignes;
-        if (commande.fournisseur_id) {
-          (commande as any).fournisseurs = await localDb.fournisseurs.get(commande.fournisseur_id);
-        }
-        if ((commande as any).proforma_id) {
-          (commande as any).demandes_proforma = await localDb.demandes_proforma.get((commande as any).proforma_id);
+        
+        if (commande.fournisseur_id && typeof commande.fournisseur_id === 'string') {
+          try { (commande as any).fournisseurs = await localDb.fournisseurs.get(commande.fournisseur_id); } catch(e) { (commande as any).fournisseurs = null; }
+        } else { (commande as any).fournisseurs = null; }
+
+        if ((commande as any).proforma_id && typeof (commande as any).proforma_id === 'string') {
+          try { (commande as any).demandes_proforma = await localDb.demandes_proforma.get((commande as any).proforma_id); } catch(e) { (commande as any).demandes_proforma = null; }
         }
       }
       console.log('✅ Commandes chargées et enrichies depuis le cache local:', commandes.length);
@@ -299,13 +302,17 @@ export const repository = {
     }
   },
 
-  async getProformas(pharmacyId: string) {
+  // ═══════════════════════════════════════
+  // PROFORMAS DE VENTE (Ventes Structures)
+  // ═══════════════════════════════════════
+  async getProformasVentes(pharmacyId: string) {
     if (navigator.onLine) {
       try {
         const { data, error } = await supabase
           .from('demandes_proforma')
-          .select(`*, fournisseurs(*), demandes_proforma_lignes(*, produits(*)), utilisateurs(*)`)
+          .select(`*, clients(*), demandes_proforma_lignes(*, produits(*)), utilisateurs(*)`)
           .eq('pharmacy_id', pharmacyId)
+          .not('client_structure_id', 'is', null)
           .order('date_demande', { ascending: false });
         
         if (!error && data) {
@@ -317,35 +324,133 @@ export const repository = {
               }
             }
           }
-          console.log('✅ Proformas chargés et mis en cache depuis Supabase:', data.length);
+          console.log('✅ Proformas Ventes chargés depuis Supabase:', data.length);
           return data;
         }
       } catch (error) {
-        console.error('❌ Erreur Supabase proformas:', error);
+        console.error('❌ Erreur Supabase proformas ventes:', error);
       }
     }
 
     try {
-      const proformas = await localDb.demandes_proforma.where('pharmacy_id').equals(pharmacyId).reverse().sortBy('date_demande');
-      for (const proforma of proformas) {
+      const allProformas = await localDb.demandes_proforma.where('pharmacy_id').equals(pharmacyId).toArray();
+      const proformasVentes = allProformas.filter(p => p.client_structure_id || p.client_id);
+      
+      for (const proforma of proformasVentes) {
         const lignes = await localDb.demandes_proforma_lignes.where('demande_id').equals(proforma.id).toArray();
+        
         for (const ligne of lignes) {
-          const produit = await localDb.produits.get(ligne.produit_id);
-          (ligne as any).produits = produit;
+          // ✅ PROTECTION BLINDÉE : Ne chercher le produit que si l'ID est une chaîne valide
+          if (ligne.produit_id && typeof ligne.produit_id === 'string' && ligne.produit_id.trim() !== '') {
+            try {
+              const produit = await localDb.produits.get(ligne.produit_id);
+              (ligne as any).produits = produit || null;
+            } catch (e) {
+              (ligne as any).produits = null;
+            }
+          } else {
+            (ligne as any).produits = null;
+          }
         }
         (proforma as any).demandes_proforma_lignes = lignes;
-        if (proforma.fournisseur_id) {
-          (proforma as any).fournisseurs = await localDb.fournisseurs.get(proforma.fournisseur_id);
+        
+        // ✅ PROTECTION BLINDÉE : Ne chercher le client que si l'ID est une chaîne valide
+        const clientId = proforma.client_structure_id || proforma.client_id;
+        if (clientId && typeof clientId === 'string' && clientId.trim() !== '') {
+          try {
+            (proforma as any).clients = await localDb.clients.get(clientId);
+          } catch (e) {
+            (proforma as any).clients = null;
+          }
+        } else {
+          (proforma as any).clients = null;
         }
       }
-      console.log('✅ Proformas chargés et enrichis depuis le cache local:', proformas.length);
-      return proformas;
+      
+      console.log('✅ Proformas Ventes chargés depuis le cache local:', proformasVentes.length);
+      return proformasVentes;
     } catch (error) {
-      console.error('❌ Erreur chargement local proformas:', error);
+      console.error('❌ Erreur chargement local proformas ventes:', error);
       return [];
     }
   },
 
+  // ═══════════════════════════════════════
+  // PROFORMAS D'ACQUISITION (Menu Commandes)
+  // ═══════════════════════════════════════
+  async getProformasFournisseur(pharmacyId: string) {
+    if (navigator.onLine) {
+      try {
+        const { data, error } = await supabase
+          .from('demandes_proforma')
+          .select(`*, fournisseurs(*), demandes_proforma_lignes(*, produits(*)), utilisateurs(*)`)
+          .eq('pharmacy_id', pharmacyId)
+          .not('fournisseur_id', 'is', null)
+          .order('date_demande', { ascending: false });
+        
+        if (!error && data) {
+          for (const proforma of data) {
+            await localDb.demandes_proforma.put(proforma);
+            if (proforma.demandes_proforma_lignes) {
+              for (const ligne of proforma.demandes_proforma_lignes) {
+                await localDb.demandes_proforma_lignes.put(ligne);
+              }
+            }
+          }
+          console.log('✅ Proformas Fournisseurs chargés depuis Supabase:', data.length);
+          return data;
+        }
+      } catch (error) {
+        console.error('❌ Erreur Supabase proformas fournisseurs:', error);
+      }
+    }
+
+    try {
+      const allProformas = await localDb.demandes_proforma.where('pharmacy_id').equals(pharmacyId).toArray();
+      const proformasFournisseur = allProformas.filter(p => p.fournisseur_id);
+      
+      for (const proforma of proformasFournisseur) {
+        const lignes = await localDb.demandes_proforma_lignes.where('demande_id').equals(proforma.id).toArray();
+        
+        for (const ligne of lignes) {
+          // ✅ PROTECTION BLINDÉE
+          if (ligne.produit_id && typeof ligne.produit_id === 'string' && ligne.produit_id.trim() !== '') {
+            try {
+              const produit = await localDb.produits.get(ligne.produit_id);
+              (ligne as any).produits = produit || null;
+            } catch (e) {
+              (ligne as any).produits = null;
+            }
+          } else {
+            (ligne as any).produits = null;
+          }
+        }
+        (proforma as any).demandes_proforma_lignes = lignes;
+        
+        // ✅ PROTECTION BLINDÉE
+        const fournisseurId = proforma.fournisseur_id;
+        if (fournisseurId && typeof fournisseurId === 'string' && fournisseurId.trim() !== '') {
+          try {
+            (proforma as any).fournisseurs = await localDb.fournisseurs.get(fournisseurId);
+          } catch (e) {
+            (proforma as any).fournisseurs = null;
+          }
+        } else {
+          (proforma as any).fournisseurs = null;
+        }
+      }
+      
+      console.log('✅ Proformas Fournisseurs chargés depuis le cache local:', proformasFournisseur.length);
+      return proformasFournisseur;
+    } catch (error) {
+      console.error('❌ Erreur chargement local proformas fournisseurs:', error);
+      return [];
+    }
+  },
+
+  // ═══════════════════════════════════════
+  // RÉCEPTIONS
+  // ═══════════════════════════════════════
   async getReceptions(pharmacyId: string) {
     if (navigator.onLine) {
       try {
@@ -377,18 +482,22 @@ export const repository = {
       for (const reception of receptions) {
         const lignes = await localDb.reception_lignes.where('reception_id').equals(reception.id).toArray();
         for (const ligne of lignes) {
-          const produit = await localDb.produits.get(ligne.produit_id);
-          (ligne as any).produits = produit;
+          if (ligne.produit_id && typeof ligne.produit_id === 'string') {
+            try { (ligne as any).produits = await localDb.produits.get(ligne.produit_id); } catch(e) { (ligne as any).produits = null; }
+          } else { (ligne as any).produits = null; }
         }
         (reception as any).reception_lignes = lignes;
-        if (reception.commande_id) {
-          const commande = await localDb.commandes.get(reception.commande_id);
-          if (commande) {
-            (reception as any).commandes_fournisseurs = {
-              numero_commande: commande.numero_commande,
-              fournisseurs: await localDb.fournisseurs.get(commande.fournisseur_id)
-            };
-          }
+        
+        if (reception.commande_id && typeof reception.commande_id === 'string') {
+          try {
+            const commande = await localDb.commandes.get(reception.commande_id);
+            if (commande) {
+              (reception as any).commandes_fournisseurs = {
+                numero_commande: commande.numero_commande,
+                fournisseurs: commande.fournisseur_id && typeof commande.fournisseur_id === 'string' ? await localDb.fournisseurs.get(commande.fournisseur_id) : null
+              };
+            }
+          } catch(e) { /* Ignorer les erreurs de jointure locale */ }
         }
       }
       console.log('✅ Réceptions chargées et enrichies depuis le cache local:', receptions.length);
@@ -399,10 +508,9 @@ export const repository = {
     }
   },
 
-    // ═══════════════════════════════════════
-  // GESTION DES COMPTES CLIENTS (AVOIR / CRÉDIT BON)
   // ═══════════════════════════════════════
-  
+  // GESTION DES COMPTES CLIENTS (AVOIR / CRÉDIT)
+  // ═══════════════════════════════════════
   async getCompteClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon') {
     return await localDb.comptes_clients
       .where('pharmacy_id').equals(pharmacyId)
@@ -412,9 +520,8 @@ export const repository = {
 
   async enregistrerDepotClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon', montant: number, societeReference?: string, description?: string) {
     const now = new Date().toISOString();
-    
-    // 1. Trouver ou créer le compte
     let compte = await this.getCompteClient(pharmacyId, clientId, typeCompte);
+    
     if (!compte) {
       const nouveauCompteId = uuidv4();
       compte = {
@@ -431,7 +538,6 @@ export const repository = {
       await localDb.comptes_clients.add(compte);
     }
 
-    // 2. Mettre à jour le solde
     const nouveauSolde = compte.solde_actuel + montant;
     await localDb.comptes_clients.update(compte.id, { 
       solde_actuel: nouveauSolde, 
@@ -439,7 +545,6 @@ export const repository = {
       _sync_status: 'pending_update'
     });
 
-    // 3. Enregistrer l'historique
     const historiqueId = uuidv4();
     await localDb.historique_consommation_compte.add({
       id: historiqueId,
@@ -452,7 +557,6 @@ export const repository = {
       _sync_status: 'pending_create'
     });
     
-    // 4. Log pour synchronisation Supabase
     await syncEngine.logOperation('comptes_clients', compte.id, 'update', { solde_actuel: nouveauSolde });
     await syncEngine.logOperation('historique_consommation_compte', historiqueId, 'create', { compte_id: compte.id, montant, type_operation: 'depot' });
 
@@ -494,11 +598,11 @@ export const repository = {
     return nouveauSolde;
   },
 
-    async getAllComptesClients(pharmacyId: string) {
+  async getAllComptesClients(pharmacyId: string) {
     return await localDb.comptes_clients
       .where('pharmacy_id')
       .equals(pharmacyId)
-      .and(c => c.solde_actuel > 0 || c.type_compte === 'avoir') // On affiche tout, même si solde 0 pour avoir
+      .and(c => c.solde_actuel > 0 || c.type_compte === 'avoir')
       .toArray();
   },
 
@@ -510,13 +614,12 @@ export const repository = {
       .sortBy('date_operation');
   },
 
-  // Récupérer tous les clients pour les lier aux comptes
   async getAllClientsForAccounts(pharmacyId: string) {
     return await localDb.clients.where('pharmacy_id').equals(pharmacyId).toArray();
   },
 
   // ═══════════════════════════════════════
-  // PROFORMA (NE DÉSTOCKE PAS)
+  // PROFORMA & PAIEMENT COMPTANT
   // ═══════════════════════════════════════
   async createProforma(data: any, lignes: any[]) {
     const proformaId = data.id || uuidv4();
@@ -531,28 +634,73 @@ export const repository = {
       _sync_status: 'pending_create' as const 
     };
     
-    // 1. Sauvegarder l'en-tête du proforma
     await localDb.demandes_proforma.add(proforma);
     await syncEngine.logOperation('demandes_proforma', proformaId, 'create', proforma);
 
-    // 2. Sauvegarder les lignes (SANS appeler decrementerStock)
     for (const ligne of lignes) {
       const ligneId = ligne.id || uuidv4();
-      const proformaLigne = { 
+      await localDb.demandes_proforma_lignes.add({ 
         ...ligne, 
         id: ligneId, 
         demande_id: proformaId, 
         _sync_status: 'pending_create' as const 
-      };
-      await localDb.demandes_proforma_lignes.add(proformaLigne);
-      await syncEngine.logOperation('demandes_proforma_lignes', ligneId, 'create', proformaLigne);
+      });
+      await syncEngine.logOperation('demandes_proforma_lignes', ligneId, 'create', { demande_id: proformaId });
     }
-
     return proforma;
   },
 
+  async updateProforma(proformaId: string, data: any, lignes: any[]) {
+  console.log('🔄 Mise à jour proforma:', proformaId, 'avec', lignes.length, 'lignes');
+  
+  // 1. Mettre à jour le proforma
+  await localDb.demandes_proforma.update(proformaId, { 
+    ...data, 
+    updated_at: new Date().toISOString(),
+    _sync_status: 'pending_update'
+  });
+  await syncEngine.logOperation('demandes_proforma', proformaId, 'update', data);
+
+  // 2. SUPPRIMER TOUTES les anciennes lignes du proforma
+  const anciennesLignes = await localDb.demandes_proforma_lignes
+    .where('demande_id')
+    .equals(proformaId)
+    .toArray();
+  
+  console.log('🗑️ Suppression de', anciennesLignes.length, 'anciennes lignes');
+  
+  for (const ligne of anciennesLignes) {
+    await localDb.demandes_proforma_lignes.delete(ligne.id);
+    await syncEngine.logOperation('demandes_proforma_lignes', ligne.id, 'delete', { 
+      demande_id: proformaId,
+      ancienne_ligne_id: ligne.id 
+    });
+  }
+
+  // 3. Ajouter les nouvelles lignes
+  console.log('➕ Ajout de', lignes.length, 'nouvelles lignes');
+  for (const ligne of lignes) {
+    const ligneId = ligne.id || uuidv4();
+    const nouvelleLigne = {
+      id: ligneId,
+      produit_id: ligne.produit_id,
+      quantite_demandee: ligne.quantite_demandee,
+      prix_unitaire_estime: ligne.prix_unitaire_estime,
+      prix_unitaire_propose: ligne.prix_unitaire_propose,
+      lot_numero: ligne.lot_numero,
+      date_expiration: ligne.date_expiration || null,
+      demande_id: proformaId,
+      _sync_status: 'pending_create' as const
+    };
+    
+    await localDb.demandes_proforma_lignes.add(nouvelleLigne);
+    await syncEngine.logOperation('demandes_proforma_lignes', ligneId, 'create', nouvelleLigne);
+  }
+  
+  return data;
+},
+
   async transformerProformaEnVente(proformaId: string, venteData: any, lignesVente: any[]) {
-    // 1. Marquer le proforma comme transformé
     await localDb.demandes_proforma.update(proformaId, { 
       statut: 'transformee',
       updated_at: new Date().toISOString(),
@@ -560,8 +708,41 @@ export const repository = {
     });
     await syncEngine.logOperation('demandes_proforma', proformaId, 'update', { statut: 'transformee' });
 
-    // 2. Créer la vente (CETTE FONCTION APPELLE decrementerStock en interne)
-    return await this.createVente(venteData, lignesVente);
+    const venteDataPourCaisse = {
+      ...venteData,
+      statut: 'en_attente_paiement'
+    };
+
+    const venteCreee = await this.createVente(venteDataPourCaisse, lignesVente);
+    return venteCreee;
+  },
+
+    // ═══════════════════════════════════════
+  // SUPPRESSION DE PROFORMA (Brouillon uniquement)
+  // ═══════════════════════════════════════
+  async deleteProforma(proformaId: string) {
+    // 1. Supprimer les lignes associées
+    const lignes = await localDb.demandes_proforma_lignes.where('demande_id').equals(proformaId).toArray();
+    for (const ligne of lignes) {
+      await localDb.demandes_proforma_lignes.delete(ligne.id);
+      await syncEngine.logOperation('demandes_proforma_lignes', ligne.id, 'delete', { demande_id: proformaId });
+    }
+    
+    // 2. Supprimer le proforma
+    await localDb.demandes_proforma.delete(proformaId);
+    await syncEngine.logOperation('demandes_proforma', proformaId, 'delete', { id: proformaId });
+  },
+
+  // ═══════════════════════════════════════
+  // RÉCUPÉRER LE PREMIER LOT DISPONIBLE (FEFO)
+  // ═══════════════════════════════════════
+  async getFirstAvailableStock(pharmacyId: string, produitId: string) {
+    const stocks = await localDb.stock
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(s => s.produit_id === produitId && s.quantite > 0)
+      .sortBy('date_expiration'); // Trie par date de péremption la plus proche
+    
+    return stocks.length > 0 ? stocks[0] : null;
   },
 
   // ═══════════════════════════════════════
@@ -570,10 +751,12 @@ export const repository = {
   async forceSync() {
     return await syncEngine.syncAll();
   },
+  
   getSyncStatus() {
     return syncEngine.getStatus();
   },
+  
   onSyncStatusChange(listener: (status: any) => void) {
     return syncEngine.onStatusChange(listener);
-  },
-};
+  }
+}; // ←⚠️ CETTE ACCOLADE FERME L'OBJET 'repository' À LA TOUTE FIN

@@ -17,6 +17,7 @@ import { AssurancePaymentsManager } from './components/assurances/AssurancePayme
 import { CashierMenu } from './components/cashier/CashierMenu';
 import { StockTabs } from './components/stock/StockTabs';
 import { ComptesClientsManager } from './components/clients/ComptesClientsManager';
+import { PaiementComptantManager } from './components/orders/PaiementComptantManager';
 
 export function AppContent() {
   const { user, utilisateur, loading, error, signOut, retryLoadUser, refreshSession, dataVersion, refreshData } = useAuth();
@@ -65,22 +66,22 @@ export function AppContent() {
     const permissions = {
       admin: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true,'comptes-clients': true,
+        'historique-ventes': true, 'paiements-assurances': true, clients: true,'comptes-clients': true,'ventes-structures': true,
         fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: true
       },
       pharmacien: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true,
+        'historique-ventes': true, 'paiements-assurances': true, clients: true,'ventes-structures': true,
         fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: false
       },
       vendeur: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: false,
-        'historique-ventes': true, 'paiements-assurances': false, clients: true,'comptes-clients': false,
+        'historique-ventes': true, 'paiements-assurances': false, clients: true,'comptes-clients': false,'ventes-structures': true,
         fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
       },
       caissier: {
         dashboard: true, produits: false, stock: false, ventes: false, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': false, clients: false,'comptes-clients': true,
+        'historique-ventes': true, 'paiements-assurances': false, clients: false,'comptes-clients': true,'ventes-structures': true,
         fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
       },
     };
@@ -172,6 +173,7 @@ export function AppContent() {
         case 'produits': return <ProductsManager />;
         case 'stock': return <StockTabs />;
         case 'ventes': return <SalesManager />;
+        case 'ventes-structures':return <PaiementComptantManager />;
         case 'caissier': return <CashierMenu />;
         case 'historique-ventes': return <SalesHistory />;
         case 'paiements-assurances': return <AssurancePaymentsManager />;

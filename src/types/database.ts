@@ -97,6 +97,9 @@ export interface Client {
   autorise_credit?: boolean;
   autorise_avoir?: boolean;
   plafond_credit?: number;
+  type_relation?: 'particulier' | 'employe_structure' | 'structure_acheteuse';
+  entreprise_employeur?: string; // Où le client travaille (pour crédits bons, avoirs)
+  structure_acheteuse?: string;
   created_at: string;
   updated_at?: string; // ✅ AJOUTÉ
   assurances?: Assurance;

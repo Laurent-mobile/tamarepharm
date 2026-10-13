@@ -21,53 +21,53 @@ export function ReceptionForm({ commande, onClose, onReceptionSuccess }: any) {
   }, [commande?.id]);
 
   const chargerDonneesInitiales = async () => {
-  setLoading(true);
-  try {
-    // ✅ Détection automatique du dépôt principal
-    const depot = await repository.getDepotPrincipal(utilisateur!.pharmacy_id);
-    
-    if (!depot) {
-      alert('⚠️ Aucun dépôt configuré. Veuillez créer au moins un magasin dans le module Transferts avant de réceptionner.');
-      onClose();
-      return;
+    setLoading(true);
+    try {
+      // ✅ Détection automatique du dépôt principal
+      const depot = await repository.getDepotPrincipal(utilisateur!.pharmacy_id);
+      
+      if (!depot) {
+        alert('⚠️ Aucun dépôt configuré. Veuillez créer au moins un magasin de type "Entrepôt" dans le module Transferts avant de réceptionner.');
+        onClose();
+        return;
+      }
+      
+      setDepotPrincipal(depot);
+
+      // Charger la commande
+      const { data, error } = await supabase
+        .from('commandes_fournisseurs')
+        .select(`*, commande_fournisseur_lignes(*, produits(*))`)
+        .eq('id', commande.id)
+        .single();
+
+      if (error) throw error;
+      setCommandeActuelle(data);
+      
+      const lignesInitiales = data.commande_fournisseur_lignes.map((ligne: any) => {
+        const resteARecevoir = ligne.quantite_commandee - (ligne.quantite_recue || 0);
+        return {
+          ligne_commande_id: ligne.id,
+          produit_id: ligne.produit_id,
+          produit_nom: ligne.produits?.nom || 'Produit inconnu',
+          produit_code: ligne.produits?.code_produit || '-',
+          quantite_commandee: ligne.quantite_commandee,
+          quantite_recue_precedemment: ligne.quantite_recue || 0,
+          reste_a_recevoir: resteARecevoir,
+          quantite_a_receptionner: resteARecevoir,
+          lot: '',
+          date_expiration: '',
+          etat_produit: 'conforme',
+          remarques: ''
+        };
+      });
+      setLignesReception(lignesInitiales);
+    } catch (error: any) {
+      alert('Erreur lors du chargement: ' + error.message);
+    } finally {
+      setLoading(false);
     }
-    
-    setDepotPrincipal(depot);
-
-    // Charger la commande
-    const { data, error } = await supabase
-      .from('commandes_fournisseurs')
-      .select(`*, commande_fournisseur_lignes(*, produits(*))`)
-      .eq('id', commande.id)
-      .single();
-
-    if (error) throw error;
-    setCommandeActuelle(data);
-    
-    const lignesInitiales = data.commande_fournisseur_lignes.map((ligne: any) => {
-      const resteARecevoir = ligne.quantite_commandee - (ligne.quantite_recue || 0);
-      return {
-        ligne_commande_id: ligne.id,
-        produit_id: ligne.produit_id,
-        produit_nom: ligne.produits?.nom || 'Produit inconnu',
-        produit_code: ligne.produits?.code_produit || '-',
-        quantite_commandee: ligne.quantite_commandee,
-        quantite_recue_precedemment: ligne.quantite_recue || 0,
-        reste_a_recevoir: resteARecevoir,
-        quantite_a_receptionner: resteARecevoir,
-        lot: '',
-        date_expiration: '',
-        etat_produit: 'conforme',
-        remarques: ''
-      };
-    });
-    setLignesReception(lignesInitiales);
-  } catch (error: any) {
-    alert('Erreur lors du chargement: ' + error.message);
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const mettreAJourLigne = (index: number, champ: string, valeur: any) => {
     const nouvellesLignes = [...lignesReception];
@@ -159,21 +159,23 @@ export function ReceptionForm({ commande, onClose, onReceptionSuccess }: any) {
         await supabase.from('commandes_fournisseurs').update({ statut: 'partielle' }).eq('id', commande.id);
       }
 
-      // 4. ✅ AJOUTER AU STOCK DU DÉPÔT PRINCIPAL (FORCÉ)
+      // 4. ✅ AJOUTER AU STOCK DU DÉPÔT PRINCIPAL (FORCÉ) via le repository
+      // Cela garantit la mise à jour de la base locale (IndexedDB) et la synchronisation Supabase
       for (const ligne of lignesAReceptionner) {
-        await supabase.from('stock').upsert({
+        await repository.ajouterEntreeStock({
           pharmacy_id: utilisateur!.pharmacy_id,
-          magasin_id: depotPrincipal.id, // ✅ TOUJOURS le dépôt principal
           produit_id: ligne.produit_id,
           quantite: ligne.quantite_a_receptionner,
           lot_numero: ligne.lot || 'SANS-LOT',
           date_expiration: ligne.date_expiration,
           date_reception: new Date().toISOString().split('T')[0],
-          statut: 'actif'
-        }, { onConflict: 'pharmacy_id,magasin_id,produit_id,lot_numero' });
+          magasin_id: depotPrincipal.id, // ✅ TOUJOURS le dépôt principal
+          prix_achat_lot: ligne.prix_unitaire || 0,
+          emplacement: null
+        });
       }
 
-      alert(`✅ Réception enregistrée avec succès !\n\n📦 Stock ajouté au dépôt : ${depotPrincipal.nom}\n\n️ Utilisez le module "Transferts" pour redistribuer vers les autres magasins.`);
+      alert(`✅ Réception enregistrée avec succès !\n\n📦 Stock ajouté au dépôt : ${depotPrincipal.nom}\n\nUtilisez le module "Transferts" pour redistribuer vers les autres magasins.`);
       onReceptionSuccess(commande.id);
       onClose();
     } catch (error: any) {
@@ -263,7 +265,7 @@ export function ReceptionForm({ commande, onClose, onReceptionSuccess }: any) {
                     <select value={ligne.etat_produit} onChange={(e) => mettreAJourLigne(index, 'etat_produit', e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" disabled={ligne.quantite_a_receptionner === 0}>
                       <option value="conforme">✅ Conforme</option>
                       <option value="non_conforme">❌ Non conforme</option>
-                      <option value="endommage">️ Endommagé</option>
+                      <option value="endommage">⚠️ Endommagé</option>
                     </select>
                   </div>
                 </div>

@@ -22,7 +22,8 @@ const TABLE_MAPPING: Record<string, string> = {
   magasins: 'magasins',
   transferts: 'transferts',
   transfert_lignes: 'transfert_lignes',
-  // ✅ NOUVELLES TABLES AJOUTÉES
+  demandes_proforma: 'demandes_proforma',
+  demandes_proforma_lignes: 'demandes_proforma_lignes',
   comptes_clients: 'comptes_clients',
   historique_consommation_compte: 'historique_consommation_compte',
   avoirs_clients: 'avoirs_clients',
@@ -281,23 +282,22 @@ class SyncEngine {
     }
 
     const tablesToPull = [
-      { local: 'produits', remote: 'produits', pharmacyColumn: 'pharmacy_id' },
-      { local: 'clients', remote: 'clients', pharmacyColumn: 'pharmacy_id' },
-      { local: 'assurances', remote: 'assurances', pharmacyColumn: 'pharmacy_id' },
-      { local: 'fournisseurs', remote: 'fournisseurs', pharmacyColumn: 'pharmacy_id' },
-      { local: 'stock', remote: 'stock', pharmacyColumn: 'pharmacy_id' },
-      { local: 'ventes', remote: 'ventes', pharmacyColumn: 'pharmacy_id' },
-      { local: 'magasins', remote: 'magasins', pharmacyColumn: 'pharmacie_principale_id' },
-      { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' },
-      { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' },
-      { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' },
-      // ✅ NOUVELLES TABLES AJOUTÉES AU PULL
-      { local: 'comptes_clients', remote: 'comptes_clients', pharmacyColumn: 'pharmacy_id' },
-      { local: 'avoirs_clients', remote: 'avoirs_clients', pharmacyColumn: 'pharmacy_id' },
-      { local: 'credits_clients', remote: 'credits_clients', pharmacyColumn: 'pharmacy_id' },
-      // Note: historique_consommation_compte n'a pas de pharmacy_id direct, il est lié via compte_id. 
-      // Il sera synchronisé via le PUSH local, ou peut être ajouté ici sans filtre pharmacyColumn si nécessaire.
-    ];
+  { local: 'produits', remote: 'produits', pharmacyColumn: 'pharmacy_id' },
+  { local: 'clients', remote: 'clients', pharmacyColumn: 'pharmacy_id' },
+  { local: 'assurances', remote: 'assurances', pharmacyColumn: 'pharmacy_id' },
+  { local: 'fournisseurs', remote: 'fournisseurs', pharmacyColumn: 'pharmacy_id' },
+  { local: 'stock', remote: 'stock', pharmacyColumn: 'pharmacy_id' },
+  { local: 'ventes', remote: 'ventes', pharmacyColumn: 'pharmacy_id' },
+  { local: 'magasins', remote: 'magasins', pharmacyColumn: 'pharmacie_principale_id' },
+  { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' },
+  // ✅ AJOUTEZ CES LIGNES ICI :
+  { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' },
+  { local: 'demandes_proforma_lignes', remote: 'demandes_proforma_lignes', pharmacyColumn: null }, // Pas de pharmacy_id direct sur les lignes
+  { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' },
+  { local: 'comptes_clients', remote: 'comptes_clients', pharmacyColumn: 'pharmacy_id' },
+  { local: 'avoirs_clients', remote: 'avoirs_clients', pharmacyColumn: 'pharmacy_id' },
+  { local: 'credits_clients', remote: 'credits_clients', pharmacyColumn: 'pharmacy_id' },
+];
 
     for (const table of tablesToPull) {
       try {

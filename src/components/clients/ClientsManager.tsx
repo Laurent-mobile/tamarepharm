@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, Shield, User, AlertTriangle, CreditCard, FileText, Gift, Building2, Filter, X } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, Shield, User, AlertTriangle, CreditCard, FileText, Gift, Building2, Filter, X, ShoppingCart } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { repository } from '../../lib/repository';
 import { LocalClient, LocalAssurance } from '../../lib/localDb';
@@ -236,55 +236,78 @@ export function ClientsManager() {
                 </tr>
               </thead>
               <tbody>
-                {filteredClients.map((client) => {
-                  const assurance = assurances.find(a => a.id === client.assurance_id);
-                  return (
-                    <tr key={client.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                      <td className="py-3 px-4 font-mono text-sm text-gray-600">{client.matricule || <span className="text-gray-300">-</span>}</td>
-                      <td className="py-3 px-4 font-medium text-gray-900">{client.nom_complet}</td>
-                      <td className="py-3 px-4">
-                        {client.entreprise ? (
-                          <div className="flex items-center gap-2 text-gray-700">
-                            <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                            <span className="truncate" title={client.entreprise}>{client.entreprise}</span>
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 text-sm italic">Particulier</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-gray-600 text-sm">{client.telephone || <span className="text-gray-300">-</span>}</td>
-                      <td className="py-3 px-4">
-                        <div className="flex gap-1 flex-wrap">
-                          {client.autorise_bon && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><FileText className="w-3 h-3"/> Bon</span>}
-                          {client.autorise_credit && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><CreditCard className="w-3 h-3"/> Crédit</span>}
-                          {client.autorise_avoir && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><Gift className="w-3 h-3"/> Avoir</span>}
-                          {!client.autorise_bon && !client.autorise_credit && !client.autorise_avoir && <span className="text-gray-400 text-xs">Aucune</span>}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        {assurance ? (
-                          <div className="flex flex-col">
-                            <span className="text-blue-700 font-medium text-sm">{assurance.nom}</span>
-                            <span className="text-xs text-gray-500">Taux: {client.taux_couverture || assurance.taux_couverture}%</span>
-                          </div>
-                        ) : (
-                          <span className="text-gray-400 text-sm">Aucune</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center justify-center gap-2">
-                          <button onClick={() => { setSelectedClient(client); setShowForm(true); }} className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Modifier">
-                            <Edit2 className="w-4 h-4" />
-                          </button>
-                          <button onClick={() => deleteClient(client.id)} className="inline-flex items-center gap-1 p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition" title="Supprimer">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
+  {filteredClients.map((client) => {
+    const assurance = assurances.find(a => a.id === client.assurance_id);
+    
+    // ✅ CORRECTION 1 : Récupérer le nom de la structure peu importe le champ utilisé
+    const nomStructure = client.structure_acheteuse || client.entreprise_employeur || client.entreprise;
+
+    return (
+      <tr key={client.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+        <td className="py-3 px-4 font-mono text-sm text-gray-600">{client.matricule || <span className="text-gray-300">-</span>}</td>
+        <td className="py-3 px-4 font-medium text-gray-900">{client.nom_complet}</td>
+        
+        {/* ✅ COLONNE ENTREPRISE / STRUCTURE CORRIGÉE */}
+        <td className="py-3 px-4">
+          {nomStructure ? (
+            <div className="flex items-center gap-2 text-gray-700">
+              <Building2 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <span className="truncate font-medium" title={nomStructure}>{nomStructure}</span>
+            </div>
+          ) : (
+            <span className="text-gray-400 text-sm italic">Particulier</span>
+          )}
+        </td>
+
+        <td className="py-3 px-4 text-gray-600 text-sm">{client.telephone || <span className="text-gray-300">-</span>}</td>
+        
+        {/* ✅ COLONNE TYPE DE CLIENT CORRIGÉE (Affiche maintenant le type de relation) */}
+        <td className="py-3 px-4">
+          <div className="flex flex-col gap-1.5">
+            {/* Badge du type de relation */}
+            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full w-fit ${
+              client.type_relation === 'structure_acheteuse' ? 'bg-purple-100 text-purple-700' :
+              client.type_relation === 'employe_structure' ? 'bg-blue-100 text-blue-700' :
+              'bg-gray-100 text-gray-700'
+            }`}>
+              {client.type_relation === 'structure_acheteuse' ? 'Structure Acheteuse' :
+               client.type_relation === 'employe_structure' ? 'Employé Structure' : 'Particulier'}
+            </span>
+            
+            {/* Badges des autorisations (existant) */}
+            <div className="flex gap-1 flex-wrap">
+              {client.autorise_bon && <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><FileText className="w-3 h-3"/> Bon</span>}
+              {client.autorise_credit && <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><CreditCard className="w-3 h-3"/> Crédit</span>}
+              {client.autorise_avoir && <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold uppercase rounded-full flex items-center gap-1"><Gift className="w-3 h-3"/> Avoir</span>}
+              {!client.autorise_bon && !client.autorise_credit && !client.autorise_avoir && <span className="text-gray-400 text-xs">Aucune</span>}
+            </div>
+          </div>
+        </td>
+
+        <td className="py-3 px-4">
+          {assurance ? (
+            <div className="flex flex-col">
+              <span className="text-blue-700 font-medium text-sm">{assurance.nom}</span>
+              <span className="text-xs text-gray-500">Taux: {client.taux_couverture || assurance.taux_couverture}%</span>
+            </div>
+          ) : (
+            <span className="text-gray-400 text-sm">Aucune</span>
+          )}
+        </td>
+        <td className="py-3 px-4">
+          <div className="flex items-center justify-center gap-2">
+            <button onClick={() => { setSelectedClient(client); setShowForm(true); }} className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Modifier">
+              <Edit2 className="w-4 h-4" />
+            </button>
+            <button onClick={() => deleteClient(client.id)} className="inline-flex items-center gap-1 p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition" title="Supprimer">
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  })}
+</tbody>
             </table>
           </div>
         )}
@@ -317,6 +340,9 @@ function ClientForm({ client, assurances, pharmacyId, onClose }: ClientFormProps
     autorise_credit: false,
     autorise_avoir: false,
     plafond_credit: 0,
+    type_relation: 'particulier' as 'particulier' | 'employe_structure' | 'structure_acheteuse',
+  entreprise_employeur: '',
+  structure_acheteuse: '',
   });
   
   const [loading, setLoading] = useState(false);
@@ -339,6 +365,9 @@ function ClientForm({ client, assurances, pharmacyId, onClose }: ClientFormProps
         autorise_credit: client.autorise_credit || false,
         autorise_avoir: client.autorise_avoir || false,
         plafond_credit: client.plafond_credit || 0,
+        type_relation: client.type_relation || 'particulier',
+        entreprise_employeur: client.entreprise_employeur || '',
+        structure_acheteuse: client.structure_acheteuse || '',
       });
     }
   }, [client]);
@@ -386,7 +415,10 @@ function ClientForm({ client, assurances, pharmacyId, onClose }: ClientFormProps
         autorise_credit: formData.autorise_credit,
         autorise_avoir: formData.autorise_avoir,
         plafond_credit: formData.autorise_credit ? (parseFloat(formData.plafond_credit.toString()) || 0) : 0,
-        actif: true,
+        type_relation: formData.type_relation,
+  entreprise_employeur: formData.type_relation === 'employe_structure' ? formData.entreprise_employeur.trim() : null,
+  structure_acheteuse: formData.type_relation === 'structure_acheteuse' ? formData.structure_acheteuse.trim() : null,
+  actif: true,
       };
 
       if (client) await repository.updateClient(client.id, data);
@@ -432,18 +464,59 @@ function ClientForm({ client, assurances, pharmacyId, onClose }: ClientFormProps
                 {matriculeExiste && <p className="text-red-600 text-xs mt-1 flex items-center gap-1"><AlertTriangle className="w-3 h-3"/> Déjà utilisé par {matriculeExiste}</p>}
               </div>
               
-              {/* ✅ NOUVEAU CHAMP ENTREPRISE */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Entreprise / Structure d'appartenance</label>
-                <input
-                  type="text"
-                  value={formData.entreprise}
-                  onChange={(e) => setFormData({ ...formData, entreprise: e.target.value })}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
-                  placeholder="Ex: SONABEL, Ministère de la Santé, Particulier..."
-                />
-                <p className="text-xs text-gray-500 mt-1">La société où le client travaille (distincte de son assurance).</p>
-              </div>
+              {/* ✅ TYPE DE RELATION (sélecteur principal) */}
+<div className="md:col-span-2">
+  <label className="block text-sm font-medium text-gray-700 mb-2">Type de relation *</label>
+  <div className="grid grid-cols-3 gap-3">
+    <label className={`flex items-center justify-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition ${formData.type_relation === 'particulier' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+      <input type="radio" name="type_relation" value="particulier" checked={formData.type_relation === 'particulier'} onChange={() => setFormData({...formData, type_relation: 'particulier', entreprise_employeur: '', structure_acheteuse: ''})} className="hidden" />
+      <User className="w-4 h-4" /> Particulier
+    </label>
+    <label className={`flex items-center justify-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition ${formData.type_relation === 'employe_structure' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+      <input type="radio" name="type_relation" value="employe_structure" checked={formData.type_relation === 'employe_structure'} onChange={() => setFormData({...formData, type_relation: 'employe_structure', structure_acheteuse: ''})} className="hidden" />
+      <Building2 className="w-4 h-4" /> Employé d'une structure
+    </label>
+    <label className={`flex items-center justify-center gap-2 p-3 border-2 rounded-lg cursor-pointer transition ${formData.type_relation === 'structure_acheteuse' ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+      <input type="radio" name="type_relation" value="structure_acheteuse" checked={formData.type_relation === 'structure_acheteuse'} onChange={() => setFormData({...formData, type_relation: 'structure_acheteuse', entreprise_employeur: ''})} className="hidden" />
+      <ShoppingCart className="w-4 h-4" /> Structure Acheteuse (B2B)
+    </label>
+  </div>
+</div>
+
+{/* ✅ CHAMP ENTREPRISE DYNAMIQUE (apparaît selon le type choisi) */}
+{formData.type_relation === 'employe_structure' && (
+  <div className="md:col-span-2 animate-in fade-in slide-in-from-top-2">
+    <label className="block text-sm font-medium text-blue-700 mb-2 flex items-center gap-2">
+      <Building2 className="w-4 h-4" /> Entreprise Employeur *
+    </label>
+    <input
+      type="text"
+      value={formData.entreprise_employeur}
+      onChange={(e) => setFormData({ ...formData, entreprise_employeur: e.target.value })}
+      className="w-full px-4 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-blue-50"
+      placeholder="Ex: SONABEL, CNSS, Ministère de la Santé..."
+      required
+    />
+    <p className="text-xs text-blue-600 mt-1">La société où le client travaille (utile pour les crédits bons et avoirs).</p>
+  </div>
+)}
+
+{formData.type_relation === 'structure_acheteuse' && (
+  <div className="md:col-span-2 animate-in fade-in slide-in-from-top-2">
+    <label className="block text-sm font-medium text-purple-700 mb-2 flex items-center gap-2">
+      <ShoppingCart className="w-4 h-4" /> Nom de la Structure Acheteuse *
+    </label>
+    <input
+      type="text"
+      value={formData.structure_acheteuse}
+      onChange={(e) => setFormData({ ...formData, structure_acheteuse: e.target.value })}
+      className="w-full px-4 py-2 border border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 bg-purple-50"
+      placeholder="Ex: Infirmerie SONABEL, Pharmacie Centrale, Hôpital Régional..."
+      required
+    />
+    <p className="text-xs text-purple-600 mt-1">L'entité qui achète en gros (pour les proformas B2B avec remises).</p>
+  </div>
+)}
 
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Nom complet *</label>
@@ -455,6 +528,21 @@ function ClientForm({ client, assurances, pharmacyId, onClose }: ClientFormProps
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
+             
+
+{formData.type_relation === 'employe_structure' && (
+  <div>
+    <label className="block text-sm font-medium text-gray-700 mb-2">Entreprise Employeur *</label>
+    <input type="text" value={formData.entreprise_employeur} onChange={(e) => setFormData({...formData, entreprise_employeur: e.target.value})} placeholder="Ex: SONABEL, CNSS..." className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+  </div>
+)}
+
+{formData.type_relation === 'structure_acheteuse' && (
+  <div>
+    <label className="block text-sm font-medium text-gray-700 mb-2">Nom de la Structure Acheteuse *</label>
+    <input type="text" value={formData.structure_acheteuse} onChange={(e) => setFormData({...formData, structure_acheteuse: e.target.value})} placeholder="Ex: Infirmerie SONABEL, Pharmacie Centrale..." className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500" />
+  </div>
+)}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Téléphone</label>
                 <input type="tel" value={formData.telephone} onChange={(e) => setFormData({ ...formData, telephone: e.target.value })} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" />
