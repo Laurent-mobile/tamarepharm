@@ -88,24 +88,42 @@ export function ProformaStructureForm({ onClose, proformaToEdit }: ProformaStruc
     ).slice(0, 10);
   }, [searchTerm, products]);
 
-  const ajouterAuPanier = async (produit: any) => {
+const ajouterAuPanier = async (produit: any) => {
+  try {
     const stockInfo = await repository.getFirstAvailableStock(utilisateur!.pharmacy_id, produit.id);
+    
+    // ✅ Vérifier si le stock existe avant d'ajouter
+    if (!stockInfo) {
+      alert(`️ Le produit "${produit.nom}" n'a pas de stock disponible !`);
+      return;
+    }
+    
+    // ✅ Vérifier que le produit est valide
+    if (!produit || !produit.id || !produit.nom) {
+      console.error('❌ Produit invalide:', produit);
+      alert('⚠️ Produit invalide !');
+      return;
+    }
     
     const existing = lignes.find(l => l.produit.id === produit.id);
     if (existing) {
       setLignes(lignes.map(l => l.produit.id === produit.id ? { ...l, quantite: l.quantite + 1 } : l));
     } else {
       setLignes([...lignes, { 
-        id: uuidv4(), // ✅ ID unique pour la ligne
+        id: uuidv4(),
         produit, 
         quantite: 1, 
         prix_unitaire: produit.prix_vente,
-        lot_numero: stockInfo?.lot_numero || 'N/A',
-        date_expiration: stockInfo?.date_expiration || null
+        lot_numero: stockInfo.lot_numero || stockInfo.lot || 'N/A',
+        date_expiration: stockInfo.date_expiration || null
       }]);
     }
     setSearchTerm('');
-  };
+  } catch (error) {
+    console.error('❌ Erreur ajout au panier:', error);
+    alert('Erreur lors de l\'ajout du produit');
+  }
+};
 
   const modifierQuantite = (ligneId: string, quantite: number) => {
     if (quantite <= 0) {

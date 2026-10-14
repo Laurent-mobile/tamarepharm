@@ -14,34 +14,53 @@ export function DocumentPrintModal({ vente, onClose }: DocumentPrintModalProps) 
   const [loading, setLoading] = useState(true);
   const [printType, setPrintType] = useState<'ticket' | 'facture' | 'bl'>('ticket');
 
-  // ✅ CORRECTION : Utilisation de useEffect au lieu de useState
+    // ✅ CORRECTION : Ajouter 'vente' dans les dépendances du useEffect
   useEffect(() => {
     loadLignes();
-  }, []);
+  }, [vente]); // <-- C'ÉTAIT ÇA LE PROBLÈME : il faut recharger quand 'vente' change
 
-    const loadLignes = async () => {
-    try {
-      // ✅ Si c'est une réimpression de proforma, on utilise directement les lignes normalisées
-      if (vente.isProformaReprint && vente.lignes) {
-        setLignes(vente.lignes);
-        setLoading(false);
-        return;
-      }
-
-      // ✅ Sinon, c'est une vente normale, on charge les lignes de vente depuis la base
-      const lignesData = await repository.getVenteLignes(vente.id);
-      const produits = await repository.getProduits(vente.pharmacy_id);
-      const enriched = lignesData.map((ligne: any) => {
-        const prod = produits.find((p: any) => p.id === ligne.produit_id);
-        return { ...ligne, produits: prod };
-      });
-      setLignes(enriched);
-    } catch (error) {
-      console.error('Erreur chargement lignes:', error);
-    } finally {
+ const loadLignes = async () => {
+  try {
+    console.log('🔍 Tentative de chargement des lignes pour:', vente);
+    
+    // ✅ Si c'est une réimpression de proforma, on utilise directement les lignes normalisées
+    if (vente.isProformaReprint && vente.lignes && vente.lignes.length > 0) {
+      // Filtrer uniquement les lignes valides (avec un produit et un prix > 0)
+      const lignesFiltrees = vente.lignes.filter(ligne => 
+        ligne.produits && ligne.produits.nom && ligne.quantite > 0 && ligne.prix_unitaire > 0
+      );
+      console.log('✅ Succès : Utilisation des lignes du proforma directement (', lignesFiltrees.length, 'lignes valides sur', vente.lignes.length, ')');
+      setLignes(lignesFiltrees);
       setLoading(false);
+      return;
     }
-  };
+
+    // ✅ Sinon, c'est une vente normale, on charge les lignes de vente depuis la base
+    console.log(' Chargement des lignes de vente pour l\'ID de vente:', vente.id);
+    const lignesData = await repository.getVenteLignes(vente.id);
+    console.log(' Lignes trouvées en base:', lignesData.length);
+    
+    const produits = await repository.getProduits(vente.pharmacy_id);
+    const enriched = lignesData
+      .map((ligne: any) => {
+        const prod = produits.find((p: any) => p.id === ligne.produit_id);
+        return { 
+          ...ligne, 
+          produits: prod,
+          lot: ligne.lot || ligne.lot_numero,
+          date_expiration: ligne.date_expiration
+        };
+      })
+      // Filtrer les lignes invalides
+      .filter(ligne => ligne.produits && ligne.quantite > 0);
+    
+    setLignes(enriched);
+  } catch (error) {
+    console.error('❌ Erreur chargement lignes:', error);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handlePrint = () => {
     window.print();

@@ -45,9 +45,15 @@ export function PaiementComptantManager() {
     setProformaToEdit(proforma);
   };
 
-    const handleReprint = (proforma: any) => {
-    // ✅ Normaliser les lignes du proforma pour qu'elles ressemblent à des lignes de vente
-    const lignesNormalisees = (proforma.demandes_proforma_lignes || []).map((ligne: any) => ({
+     const handleReprint = (proforma: any) => {
+    // Vérification de sécurité
+    if (!proforma.demandes_proforma_lignes || proforma.demandes_proforma_lignes.length === 0) {
+      console.warn('⚠️ Attention: Ce proforma n\'a pas de lignes enregistrées:', proforma);
+      alert('Impossible de réimprimer : aucun produit trouvé dans ce proforma.');
+      return;
+    }
+
+    const lignesNormalisees = proforma.demandes_proforma_lignes.map((ligne: any) => ({
       produit_id: ligne.produit_id,
       quantite: ligne.quantite_demandee,
       prix_unitaire: ligne.prix_unitaire_propose || ligne.prix_unitaire_estime || 0,
@@ -55,7 +61,7 @@ export function PaiementComptantManager() {
       lot: ligne.lot_numero || null,
       lot_numero: ligne.lot_numero || null,
       date_expiration: ligne.date_expiration || ligne.produits?.date_expiration || null,
-      produits: ligne.produits // Déjà enrichi avec le nom du produit par getProformasVentes
+      produits: ligne.produits
     }));
 
     const mockVente = {
@@ -65,8 +71,8 @@ export function PaiementComptantManager() {
       date_vente: proforma.date_demande,
       montant_total: proforma.montant_estime,
       clients: proforma.clients,
-      lignes: lignesNormalisees, // ✅ On passe les lignes directement
-      isProformaReprint: true // ✅ Flag pour indiquer au modal de ne pas chercher en base
+      lignes: lignesNormalisees,
+      isProformaReprint: true
     };
     
     setVenteValidee(mockVente);
@@ -552,34 +558,36 @@ export function PaiementComptantManager() {
                     <th className="text-right py-2 px-4 font-semibold text-gray-700">Total</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {detailsSale.demandes_proforma_lignes && detailsSale.demandes_proforma_lignes.length > 0 ? (
-                    detailsSale.demandes_proforma_lignes.map((ligne: any, idx: number) => {
-                      const prixU = ligne.prix_unitaire_propose || ligne.prix_unitaire_estime || 0;
-                      return (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 font-medium text-gray-900">
-                            {ligne.produits?.nom || 'Produit inconnu'}
-                            <div className="text-xs text-gray-500 font-normal">{ligne.produits?.code_produit || ''}</div>
-                          </td>
-                          <td className="py-3 px-4 text-center font-mono text-gray-600">{ligne.lot_numero || 'N/A'}</td>
-                          <td className="py-3 px-4 text-center font-mono text-gray-600">
-                            {ligne.date_expiration ? new Date(ligne.date_expiration).toLocaleDateString('fr-FR') : 'N/A'}
-                          </td>
-                          <td className="py-3 px-4 text-center font-bold text-gray-700">{ligne.quantite_demandee}</td>
-                          <td className="py-3 px-4 text-right text-gray-600">{Number(prixU).toLocaleString('fr-FR')} F</td>
-                          <td className="py-3 px-4 text-right font-bold text-gray-900">{Number(prixU * ligne.quantite_demandee).toLocaleString('fr-FR')} F</td>
-                        </tr>
-                      );
-                    })
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="py-8 text-center text-gray-500">
-                        Aucune ligne de produit trouvée pour cette vente
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
+               <tbody className="divide-y divide-gray-200">
+  {detailsSale.demandes_proforma_lignes && detailsSale.demandes_proforma_lignes.length > 0 ? (
+    detailsSale.demandes_proforma_lignes
+      .filter((ligne: any) => ligne.produits?.nom && ligne.quantite_demandee > 0) // ✅ Filtrer les lignes invalides
+      .map((ligne: any, idx: number) => {
+        const prixU = ligne.prix_unitaire_propose || ligne.prix_unitaire_estime || 0;
+        return (
+          <tr key={idx} className="hover:bg-gray-50">
+            <td className="py-3 px-4 font-medium text-gray-900">
+              {ligne.produits?.nom || 'Produit inconnu'}
+              <div className="text-xs text-gray-500 font-normal">{ligne.produits?.code_produit || ''}</div>
+            </td>
+            <td className="py-3 px-4 text-center font-mono text-gray-600">{ligne.lot_numero || 'N/A'}</td>
+            <td className="py-3 px-4 text-center font-mono text-gray-600">
+              {ligne.date_expiration ? new Date(ligne.date_expiration).toLocaleDateString('fr-FR') : 'N/A'}
+            </td>
+            <td className="py-3 px-4 text-center font-bold text-gray-700">{ligne.quantite_demandee}</td>
+            <td className="py-3 px-4 text-right text-gray-600">{Number(prixU).toLocaleString('fr-FR')} F</td>
+            <td className="py-3 px-4 text-right font-bold text-gray-900">{Number(prixU * ligne.quantite_demandee).toLocaleString('fr-FR')} F</td>
+          </tr>
+        );
+      })
+  ) : (
+    <tr>
+      <td colSpan={6} className="py-8 text-center text-gray-500">
+        Aucune ligne de produit trouvée pour cette vente
+      </td>
+    </tr>
+  )}
+</tbody>
                 <tfoot className="bg-gray-50 font-bold">
                   <tr>
                     <td colSpan={5} className="py-3 px-4 text-right text-gray-900">Total Général :</td>

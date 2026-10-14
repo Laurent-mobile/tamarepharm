@@ -737,13 +737,20 @@ export const repository = {
   // RÉCUPÉRER LE PREMIER LOT DISPONIBLE (FEFO)
   // ═══════════════════════════════════════
   async getFirstAvailableStock(pharmacyId: string, produitId: string) {
+  try {
     const stocks = await localDb.stock
       .where('pharmacy_id').equals(pharmacyId)
       .and(s => s.produit_id === produitId && s.quantite > 0)
-      .sortBy('date_expiration'); // Trie par date de péremption la plus proche
+      .sortBy('date_expiration'); // Trie par date de péremption la plus proche (FEFO)
+    
+    console.log('📦 Stocks trouvés pour', produitId, ':', stocks.length);
     
     return stocks.length > 0 ? stocks[0] : null;
-  },
+  } catch (error) {
+    console.error('❌ Erreur récupération stock pour produit', produitId, error);
+    return null;
+  }
+},
 
   // ═══════════════════════════════════════
   // SYNC UTILITAIRES
