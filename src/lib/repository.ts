@@ -131,18 +131,55 @@ export const repository = {
   async getVentesEnAttente(pharmacyId: string) {
     return await localDb.ventes.where('pharmacy_id').equals(pharmacyId).and(v => v.statut === 'en_attente_paiement').reverse().sortBy('date_vente');
   },
-  async createVente(data: any, lignes: any[]) {
+     async createVente(data: any, lignes: any[]) {
     const venteId = data.id || uuidv4();
     const now = new Date().toISOString();
-    const vente = { ...data, id: venteId, created_at: now, updated_at: now, _sync_status: 'pending_create' as const };
+    
+    // ✅ AUTO-DÉTECTION DU MAGASIN DE VENTE (Pharmacie) si non fourni explicitement
+    let magasinId = data.magasin_id;
+    if (magasinId === undefined) {
+      const magasins = await this.getMagasins(data.pharmacy_id);
+      // On cherche un magasin dont le nom contient "pharmacie" ou dont le type est "pharmacie"
+      const magasinPharmacie = magasins?.find(m => 
+        m.nom.toLowerCase().includes('pharmacie') || m.type === 'pharmacie'
+      );
+      // Fallback : si on ne trouve pas, on prend le premier magasin disponible
+      magasinId = magasinPharmacie?.id || magasins?.[0]?.id || null;
+    }
+
+    // On enregistre explicitement le magasin_id dans la vente pour la traçabilité
+    const vente = { 
+      ...data, 
+      id: venteId, 
+      magasin_id: magasinId, 
+      created_at: now, 
+      updated_at: now, 
+      _sync_status: 'pending_create' as const 
+    };
+    
     await localDb.ventes.add(vente);
     await syncEngine.logOperation('ventes', venteId, 'create', vente);
+    
     for (const ligne of lignes) {
       const ligneId = ligne.id || uuidv4();
-      const venteLigne = { ...ligne, id: ligneId, pharmacy_id: data.pharmacy_id, vente_id: venteId, _sync_status: 'pending_create' as const };
+      const venteLigne = { 
+        ...ligne, 
+        id: ligneId, 
+        pharmacy_id: data.pharmacy_id, 
+        vente_id: venteId, 
+        _sync_status: 'pending_create' as const 
+      };
       await localDb.vente_lignes.add(venteLigne);
       await syncEngine.logOperation('vente_lignes', ligneId, 'create', venteLigne);
-      await this.decrementerStock(data.pharmacy_id, ligne.produit_id, ligne.quantite, ligne.lot);
+      
+      // ✅ CRITIQUE : On passe le magasinId pour ne déduire QUE du stock de la Pharmacie
+      await this.decrementerStock(
+        data.pharmacy_id, 
+        ligne.produit_id, 
+        ligne.quantite, 
+        ligne.lot, 
+        magasinId // <-- C'est ce paramètre qui garantit que le dépôt n'est pas touché
+      );
     }
     return vente;
   },
@@ -215,18 +252,49 @@ export const repository = {
     await this.decrementerStock(pharmacyId, produitId, quantite, lotNumero);
     return true;
   },
-  async decrementerStock(pharmacyId: string, produitId: string, quantite: number, lot?: string) {
-    const stockItems = await localDb.stock.where('pharmacy_id').equals(pharmacyId).and(s => s.produit_id === produitId && s.quantite > 0).sortBy('date_expiration');
+  // ✅ FONCTION CORRIGÉE : Décrémenter le stock en respectant le magasin source et le lot (FEFO)
+     async decrementerStock(pharmacyId: string, produitId: string, quantite: number, lot?: string, magasinId?: string | null) {
+    const allStock = await localDb.stock.toArray();
+    
+    const stockItems = allStock
+      .filter(s => 
+        s.pharmacy_id === pharmacyId && 
+        s.produit_id === produitId && 
+        s.quantite > 0 && 
+        // ✅ FILTRE STRICT : On ne regarde que le stock du magasin concerné
+        (magasinId === undefined ? true : s.magasin_id === magasinId)
+      )
+      .sort((a, b) => {
+        // Tri FEFO (First Expired, First Out)
+        if (!a.date_expiration) return 1;
+        if (!b.date_expiration) return -1;
+        return new Date(a.date_expiration).getTime() - new Date(b.date_expiration).getTime();
+      });
+
     let resteADeduire = quantite;
     for (const item of stockItems) {
       if (resteADeduire <= 0) break;
+      
+      // Si un lot spécifique est demandé, on ne touche qu'à ce lot
+      if (lot && item.lot_numero !== lot) continue;
+
       const deduction = Math.min(item.quantite, resteADeduire);
       const nouvelleQuantite = item.quantite - deduction;
-      await localDb.stock.update(item.id, { quantite: nouvelleQuantite, updated_at: new Date().toISOString(), _sync_status: 'pending_update' });
-      await syncEngine.logOperation('stock', item.id, 'update', { id: item.id, quantite: nouvelleQuantite, updated_at: new Date().toISOString() });
+      
+      await localDb.stock.update(item.id, { 
+        quantite: nouvelleQuantite, 
+        updated_at: new Date().toISOString(), 
+        _sync_status: 'pending_update' 
+      });
+      await syncEngine.logOperation('stock', item.id, 'update', { id: item.id, quantite: nouvelleQuantite });
+      
       resteADeduire -= deduction;
     }
-    if (resteADeduire > 0) console.warn(`⚠️ Stock insuffisant pour produit ${produitId}: manque ${resteADeduire}`);
+    
+    if (resteADeduire > 0) {
+      console.warn(`⚠️ Stock insuffisant pour produit ${produitId} dans le magasin ${magasinId || 'Principal'}: manque ${resteADeduire}`);
+      throw new Error(`Stock insuffisant dans ce magasin pour ce produit.`);
+    }
   },
 
   // ═══════════════════════════════════════
@@ -751,6 +819,41 @@ export const repository = {
     return null;
   }
 },
+
+// ✅ NOUVELLE FONCTION : Ajouter du stock dans un magasin spécifique (pour les réceptions de transfert)
+  async ajouterStock(pharmacyId: string, produitId: string, quantite: number, lot_numero: string, magasin_id: string | null) {
+    // 1. Chercher si ce lot exact existe déjà dans ce magasin
+    const allStock = await localDb.stock.toArray();
+    const existingStock = allStock.find(s => 
+      s.pharmacy_id === pharmacyId && 
+      s.produit_id === produitId && 
+      s.magasin_id === magasin_id && 
+      s.lot_numero === (lot_numero || 'SANS-LOT')
+    );
+
+    if (existingStock) {
+      // Mettre à jour la quantité du lot existant
+      const newQty = (existingStock.quantite || 0) + quantite;
+      await localDb.stock.update(existingStock.id, {
+        quantite: newQty,
+        updated_at: new Date().toISOString(),
+        _sync_status: 'pending_update'
+      });
+      await syncEngine.logOperation('stock', existingStock.id, 'update', { quantite: newQty });
+    } else {
+      // Créer une nouvelle entrée de stock pour ce lot
+      await this.ajouterEntreeStock({
+        pharmacy_id: pharmacyId,
+        produit_id: produitId,
+        quantite: quantite,
+        lot_numero: lot_numero || 'SANS-LOT',
+        date_reception: new Date().toISOString().split('T')[0],
+        magasin_id: magasin_id,
+        prix_achat_lot: 0
+      });
+    }
+  },
+
 
   // ═══════════════════════════════════════
   // SYNC UTILITAIRES

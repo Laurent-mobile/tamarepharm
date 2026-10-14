@@ -1,5 +1,4 @@
-// src/components/transfers/TransfersManager.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Search, Plus, X, ArrowLeftRight, Package, RefreshCw, Truck,
   CheckCircle, XCircle, Eye, ChevronDown, ChevronUp, Send,
@@ -53,6 +52,15 @@ interface Produit {
   prix_vente: number;
 }
 
+// ✅ CORRIGÉ : Ajout de magasin_id pour filtrer correctement les lots
+interface LotDisponible {
+  stockId: string;
+  magasin_id: string | null;
+  lot_numero: string;
+  quantite: number;
+  date_expiration: string | null;
+}
+
 export function TransfersManager() {
   const { utilisateur } = useAuth();
   const [activeTab, setActiveTab] = useState<'transferts' | 'receptions' | 'nouveau'>('transferts');
@@ -60,13 +68,16 @@ export function TransfersManager() {
   const [transfertLignes, setTransfertLignes] = useState<Record<string, TransfertLigne[]>>({});
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [filtreMagasinDest, setFiltreMagasinDest] = useState<string>('tous');
   
-  // États pour le formulaire de création
   const [magasins, setMagasins] = useState<Magasin[]>([]);
+  const [depotPrincipal, setDepotPrincipal] = useState<Magasin | null>(null);
   const [produits, setProduits] = useState<Produit[]>([]);
   const [stockDisponible, setStockDisponible] = useState<Record<string, { disponible: number; stockId: string; lot: string }>>({});
+  const [lotsParProduit, setLotsParProduit] = useState<Record<string, LotDisponible[]>>({});
+  
   const [formLoading, setFormLoading] = useState(false);
-  const [typeTransfert, setTypeTransfert] = useState<'magasin_to_pharmacie' | 'pharmacie_to_magasin' | 'magasin_to_magasin'>('magasin_to_pharmacie');
+  const [typeTransfert, setTypeTransfert] = useState<'depot_to_pharmacie' | 'depot_to_magasin' | 'magasin_to_pharmacie' | 'magasin_to_magasin'>('depot_to_pharmacie');
   const [expandedTransfert, setExpandedTransfert] = useState<string | null>(null);
   const [selectedTransfert, setSelectedTransfert] = useState<Transfert | null>(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -75,7 +86,7 @@ export function TransfersManager() {
     magasin_source_id: '',
     magasin_destination_id: '',
     remarques: '',
-    lignes: [] as Array<{ produit_id: string; quantite: number; lot: string }>
+    lignes: [] as Array<{ produit_id: string; quantite: number; lot: string; stockId?: string }>
   });
 
   useEffect(() => {
@@ -125,6 +136,9 @@ export function TransfersManager() {
     try {
       const magasinsData = await repository.getMagasins(utilisateur.pharmacy_id);
       setMagasins(magasinsData || []);
+      
+      const depot = await repository.getDepotPrincipal(utilisateur.pharmacy_id);
+      setDepotPrincipal(depot);
     } catch (error) {
       console.error('❌ Erreur chargement magasins:', error);
     }
@@ -145,6 +159,7 @@ export function TransfersManager() {
     try {
       const stockData = await repository.getStock(utilisateur.pharmacy_id);
       const stockMap: Record<string, { disponible: number; stockId: string; lot: string }> = {};
+      const lotsMap: Record<string, LotDisponible[]> = {};
       
       stockData?.forEach(item => {
         const key = item.magasin_id ? `${item.magasin_id}_${item.produit_id}` : `pharmacie_${item.produit_id}`;
@@ -154,15 +169,35 @@ export function TransfersManager() {
           stockMap[key] = { 
             disponible, 
             stockId: item.id, 
-            lot: item.lot_numero || '' 
+            lot: item.lot_numero || 'SANS-LOT' 
           };
         }
+        
+        const lotKey = item.produit_id;
+        if (!lotsMap[lotKey]) {
+          lotsMap[lotKey] = [];
+        }
+        
+        // ✅ CORRIGÉ : On stocke maintenant le magasin_id pour pouvoir filtrer précisément
+        lotsMap[lotKey].push({
+          stockId: item.id,
+          magasin_id: item.magasin_id || null,
+          lot_numero: item.lot_numero || 'SANS-LOT',
+          quantite: disponible,
+          date_expiration: item.date_expiration
+        });
       });
+      
       setStockDisponible(stockMap);
+      setLotsParProduit(lotsMap);
     } catch (error) {
       console.error('❌ Erreur chargement stock:', error);
     }
   };
+
+  const magasinsHorsDepot = useMemo(() => {
+    return magasins.filter(m => m.id !== depotPrincipal?.id);
+  }, [magasins, depotPrincipal]);
 
   const getMagasinNom = (id: string | null) => {
     if (!id) return 'Pharmacie Principale';
@@ -175,10 +210,26 @@ export function TransfersManager() {
     return stockDisponible[key]?.disponible || 0;
   };
 
+  // ✅ CORRIGÉ : Filtre maintenant strictement par magasin_id pour éviter de montrer les lots d'autres magasins
+  const getLotsDisponibles = (magasinId: string | null, produitId: string): LotDisponible[] => {
+    if (!produitId) return [];
+    
+    const tousLesLots = lotsParProduit[produitId] || [];
+    
+    return tousLesLots
+      .filter(lot => lot.quantite > 0 && lot.magasin_id === magasinId)
+      .sort((a, b) => {
+        if (!a.date_expiration) return 1;
+        if (!b.date_expiration) return -1;
+        return new Date(a.date_expiration).getTime() - new Date(b.date_expiration).getTime();
+      });
+  };
+
   const ajouterLigne = () => {
     setFormData(prev => ({
       ...prev,
-      lignes: [...prev.lignes, { produit_id: '', quantite: 1, lot: '' }]
+      // ✅ CORRIGÉ : quantite initialisée à 1 au lieu de 0
+      lignes: [...prev.lignes, { produit_id: '', quantite: 1, lot: '', stockId: '' }]
     }));
   };
 
@@ -193,45 +244,68 @@ export function TransfersManager() {
     const nouvellesLignes = [...formData.lignes];
     nouvellesLignes[index] = { ...nouvellesLignes[index], [champ]: valeur };
     
-    if (champ === 'produit_id' || champ === 'quantite') {
-      const produitId = nouvellesLignes[index].produit_id;
-      const quantite = nouvellesLignes[index].quantite;
-      const sourceId = typeTransfert === 'pharmacie_to_magasin' ? null : formData.magasin_source_id;
-      const stock = getStockDisponibleProduit(sourceId, produitId);
+    if (champ === 'produit_id') {
+      nouvellesLignes[index].lot = '';
+      nouvellesLignes[index].stockId = '';
+      nouvellesLignes[index].quantite = 1; // ✅ Réinitialiser à 1
+    }
+    
+    if (champ === 'lot') {
+      const sourceId = (typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'depot_to_magasin') 
+        ? depotPrincipal?.id 
+        : formData.magasin_source_id;
       
-      if (produitId && stock === 0) {
-        alert(`⚠️ Stock insuffisant ! Ce produit n'est pas disponible dans la source sélectionnée.`);
-        nouvellesLignes[index].quantite = 0;
-      } else if (quantite > stock) {
-        alert(`⚠️ Stock insuffisant ! Disponible: ${stock}`);
-        nouvellesLignes[index].quantite = stock;
-      } else if (quantite < 1) {
-        nouvellesLignes[index].quantite = 1;
+      const lots = getLotsDisponibles(sourceId, nouvellesLignes[index].produit_id);
+      const lotChoisi = lots.find(l => l.lot_numero === valeur);
+      
+      if (lotChoisi) {
+        nouvellesLignes[index].stockId = lotChoisi.stockId;
+        if (nouvellesLignes[index].quantite > lotChoisi.quantite) {
+          nouvellesLignes[index].quantite = lotChoisi.quantite;
+        }
       }
     }
+    
+    if (champ === 'quantite') {
+      const quantite = parseInt(valeur) || 0;
+      const sourceId = (typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'depot_to_magasin') 
+        ? depotPrincipal?.id 
+        : formData.magasin_source_id;
+      
+      if (nouvellesLignes[index].lot) {
+        const lots = getLotsDisponibles(sourceId, nouvellesLignes[index].produit_id);
+        const lotChoisi = lots.find(l => l.lot_numero === nouvellesLignes[index].lot);
+        
+        if (lotChoisi && quantite > lotChoisi.quantite) {
+          alert(`⚠️ Quantité insuffisante dans ce lot ! Disponible: ${lotChoisi.quantite}`);
+          nouvellesLignes[index].quantite = lotChoisi.quantite;
+        } else {
+          nouvellesLignes[index].quantite = Math.max(1, quantite);
+        }
+      } else {
+        const stock = getStockDisponibleProduit(sourceId, nouvellesLignes[index].produit_id);
+        if (quantite > stock) {
+          alert(`⚠️ Stock insuffisant ! Disponible: ${stock}`);
+          nouvellesLignes[index].quantite = stock;
+        } else {
+          nouvellesLignes[index].quantite = Math.max(1, quantite);
+        }
+      }
+    }
+    
     setFormData(prev => ({ ...prev, lignes: nouvellesLignes }));
   };
 
   const creerTransfert = async () => {
     if (!utilisateur) return;
 
-    if (typeTransfert === 'magasin_to_pharmacie' && !formData.magasin_source_id) {
+    if ((typeTransfert === 'magasin_to_pharmacie' || typeTransfert === 'magasin_to_magasin') && !formData.magasin_source_id) {
       alert('Veuillez sélectionner un magasin source');
       return;
     }
-    if (typeTransfert === 'pharmacie_to_magasin' && !formData.magasin_destination_id) {
+    if ((typeTransfert === 'depot_to_magasin' || typeTransfert === 'magasin_to_magasin') && !formData.magasin_destination_id) {
       alert('Veuillez sélectionner un magasin de destination');
       return;
-    }
-    if (typeTransfert === 'magasin_to_magasin') {
-      if (!formData.magasin_source_id || !formData.magasin_destination_id) {
-        alert('Veuillez sélectionner les magasins source et destination');
-        return;
-      }
-      if (formData.magasin_source_id === formData.magasin_destination_id) {
-        alert('Les magasins source et destination doivent être différents');
-        return;
-      }
     }
 
     if (formData.lignes.length === 0) {
@@ -240,11 +314,26 @@ export function TransfersManager() {
     }
 
     for (const ligne of formData.lignes) {
-      const sourceId = typeTransfert === 'pharmacie_to_magasin' ? null : formData.magasin_source_id;
-      const stock = getStockDisponibleProduit(sourceId, ligne.produit_id);
-      if (ligne.quantite > stock || ligne.quantite <= 0) {
+      if (!ligne.lot) {
+        alert(`⚠️ Veuillez sélectionner un lot pour ${produits.find(p => p.id === ligne.produit_id)?.nom}`);
+        return;
+      }
+      
+      const sourceId = (typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'depot_to_magasin') 
+        ? depotPrincipal?.id 
+        : formData.magasin_source_id;
+        
+      const lots = getLotsDisponibles(sourceId, ligne.produit_id);
+      const lotChoisi = lots.find(l => l.lot_numero === ligne.lot);
+      
+      if (!lotChoisi) {
+        alert(`⚠️ Lot invalide pour ${produits.find(p => p.id === ligne.produit_id)?.nom}`);
+        return;
+      }
+      
+      if (ligne.quantite > lotChoisi.quantite || ligne.quantite <= 0) {
         const produit = produits.find(p => p.id === ligne.produit_id);
-        alert(`Stock invalide pour ${produit?.nom}. Disponible: ${stock}`);
+        alert(`Quantité invalide pour ${produit?.nom} (Lot ${ligne.lot}). Disponible: ${lotChoisi.quantite}`);
         return;
       }
     }
@@ -252,12 +341,19 @@ export function TransfersManager() {
     setFormLoading(true);
     try {
       const numeroTransfert = `TRF${Date.now().toString().slice(-6)}`;
-      let sourceId = null, destId = null;
       
-      if (typeTransfert === 'magasin_to_pharmacie') {
-        sourceId = formData.magasin_source_id;
-      } else if (typeTransfert === 'pharmacie_to_magasin') {
+      let sourceId: string | null = null;
+      let destId: string | null = null;
+      
+      if (typeTransfert === 'depot_to_pharmacie') {
+        sourceId = depotPrincipal?.id || null;
+        destId = null;
+      } else if (typeTransfert === 'depot_to_magasin') {
+        sourceId = depotPrincipal?.id || null;
         destId = formData.magasin_destination_id;
+      } else if (typeTransfert === 'magasin_to_pharmacie') {
+        sourceId = formData.magasin_source_id;
+        destId = null;
       } else {
         sourceId = formData.magasin_source_id;
         destId = formData.magasin_destination_id;
@@ -295,7 +391,7 @@ export function TransfersManager() {
 
     } catch (error: any) {
       console.error('❌ Erreur création transfert:', error);
-      alert('❌ Erreur: ' + error.message);
+      alert('Erreur: ' + error.message);
     } finally {
       setFormLoading(false);
     }
@@ -310,19 +406,19 @@ export function TransfersManager() {
     try {
       const lignes = await repository.getTransfertLignes(transfert.id);
       
-      // Déduire le stock de la source
       for (const ligne of lignes) {
         await repository.decrementerStock(
           utilisateur!.pharmacy_id,
           ligne.produit_id,
           ligne.quantite,
-          ligne.lot || ''
+          ligne.lot || undefined,
+          transfert.magasin_source_id
         );
       }
       
       await repository.updateTransfert(transfert.id, { statut: 'en_transit' });
       
-      alert(`✅ Transfert ${transfert.numero_transfert} expédié avec succès !\n\n${lignes.length} produit(s) déduits du stock.`);
+      alert(`✅ Transfert ${transfert.numero_transfert} expédié avec succès !`);
       await loadTransfers();
       await loadStockDisponible();
     } catch (error: any) {
@@ -334,7 +430,10 @@ export function TransfersManager() {
   };
 
   const recevoirTransfert = async (transfert: Transfert) => {
-    if (!confirm(`Confirmez-vous la réception du transfert ${transfert.numero_transfert} ?\n\nLes produits seront ajoutés au stock destination.`)) {
+    const magasinDest = getMagasinNom(transfert.magasin_destination_id);
+    
+    if (!confirm(`Confirmez-vous la réception du transfert ${transfert.numero_transfert} ?\n\n` +
+                 `📦 ${transfertLignes[transfert.id]?.length || 0} produit(s) seront ajoutés au stock de : ${magasinDest}`)) {
       return;
     }
 
@@ -342,15 +441,23 @@ export function TransfersManager() {
     try {
       const lignes = await repository.getTransfertLignes(transfert.id);
       
-      // Ajouter le stock à la destination
+      if (lignes.length === 0) {
+        alert('⚠️ Ce transfert ne contient aucune ligne de produit.');
+        setFormLoading(false);
+        return;
+      }
+
+      let totalRecu = 0;
+      
       for (const ligne of lignes) {
         await repository.ajouterStock(
           utilisateur!.pharmacy_id,
           ligne.produit_id,
           ligne.quantite,
-          ligne.lot || '',
+          ligne.lot || 'SANS-LOT',
           transfert.magasin_destination_id
         );
+        totalRecu += ligne.quantite;
       }
       
       await repository.updateTransfert(transfert.id, { 
@@ -358,7 +465,9 @@ export function TransfersManager() {
         recu_par: utilisateur.id 
       });
       
-      alert(`✅ Transfert ${transfert.numero_transfert} réceptionné avec succès !\n\n${lignes.length} produit(s) ajoutés au stock.`);
+      alert(`✅ Transfert ${transfert.numero_transfert} réceptionné avec succès !\n\n` +
+            `📦 ${totalRecu} unité(s) ajoutée(s) au stock de : ${magasinDest}`);
+      
       await loadTransfers();
       await loadStockDisponible();
     } catch (error: any) {
@@ -413,11 +522,21 @@ export function TransfersManager() {
     getMagasinNom(t.magasin_destination_id).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const transfersEnAttenteDeReception = transfers.filter(t => 
-    t.statut === 'en_transit' && 
-    ((t.magasin_destination_id && t.pharmacy_destination_id === utilisateur?.pharmacy_id) ||
-     (!t.magasin_destination_id && t.pharmacy_destination_id === utilisateur?.pharmacy_id))
-  );
+  const transfersEnAttenteDeReception = useMemo(() => {
+    return transfers.filter(t => {
+      if (t.statut !== 'en_transit') return false;
+      
+      if (filtreMagasinDest !== 'tous') {
+        if (filtreMagasinDest === 'pharmacie') {
+          return !t.magasin_destination_id;
+        } else {
+          return t.magasin_destination_id === filtreMagasinDest;
+        }
+      }
+      
+      return true;
+    });
+  }, [transfers, filtreMagasinDest]);
 
   // Vue des détails
   if (showDetails && selectedTransfert) {
@@ -518,7 +637,7 @@ export function TransfersManager() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-3xl font-bold text-gray-900">Nouveau Transfert</h2>
-            <p className="text-gray-600 mt-1">Transférer des stocks entre magasins et pharmacie principale</p>
+            <p className="text-gray-600 mt-1">Transférer des stocks entre le dépôt, la pharmacie et les magasins</p>
           </div>
           <button onClick={() => setActiveTab('transferts')} className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition">
             <X className="w-5 h-5" /> Annuler
@@ -528,44 +647,78 @@ export function TransfersManager() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <div className="mb-6">
             <label className="block text-sm font-medium text-gray-700 mb-2">Type de transfert *</label>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <button onClick={() => { setTypeTransfert('magasin_to_pharmacie'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} className={`px-4 py-2 rounded-lg font-medium transition ${typeTransfert === 'magasin_to_pharmacie' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <Package className="w-4 h-4 inline mr-2" /> Magasin → Pharmacie
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <button 
+                onClick={() => { setTypeTransfert('depot_to_pharmacie'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} 
+                className={`px-4 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${typeTransfert === 'depot_to_pharmacie' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                <Building2 className="w-4 h-4" /> Dépôt → Pharmacie
               </button>
-              <button onClick={() => { setTypeTransfert('pharmacie_to_magasin'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} className={`px-4 py-2 rounded-lg font-medium transition ${typeTransfert === 'pharmacie_to_magasin' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <ArrowLeftRight className="w-4 h-4 inline mr-2" /> Pharmacie → Magasin
+              <button 
+                onClick={() => { setTypeTransfert('depot_to_magasin'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} 
+                className={`px-4 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${typeTransfert === 'depot_to_magasin' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                <Warehouse className="w-4 h-4" /> Dépôt → Magasin
               </button>
-              <button onClick={() => { setTypeTransfert('magasin_to_magasin'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} className={`px-4 py-2 rounded-lg font-medium transition ${typeTransfert === 'magasin_to_magasin' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <Truck className="w-4 h-4 inline mr-2" /> Magasin → Magasin
+              <button 
+                onClick={() => { setTypeTransfert('magasin_to_pharmacie'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} 
+                className={`px-4 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${typeTransfert === 'magasin_to_pharmacie' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                <ArrowLeftRight className="w-4 h-4" /> Magasin → Pharmacie
+              </button>
+              <button 
+                onClick={() => { setTypeTransfert('magasin_to_magasin'); setFormData(prev => ({ ...prev, magasin_source_id: '', magasin_destination_id: '', lignes: [] })); }} 
+                className={`px-4 py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${typeTransfert === 'magasin_to_magasin' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+              >
+                <Truck className="w-4 h-4" /> Magasin → Magasin
               </button>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            {(typeTransfert === 'magasin_to_pharmacie' || typeTransfert === 'magasin_to_magasin') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Magasin source *</label>
-                <select value={formData.magasin_source_id} onChange={(e) => setFormData(prev => ({ ...prev, magasin_source_id: e.target.value }))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Magasin Source *</label>
+              {typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'depot_to_magasin' ? (
+                <input 
+                  type="text" 
+                  value={depotPrincipal?.nom || 'Dépôt Principal'} 
+                  disabled 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 font-medium" 
+                />
+              ) : (
+                <select 
+                  value={formData.magasin_source_id} 
+                  onChange={(e) => setFormData(prev => ({ ...prev, magasin_source_id: e.target.value, lignes: [] }))} 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                >
                   <option value="">Sélectionner un magasin</option>
-                  {magasins.map(m => <option key={m.id} value={m.id}>{m.nom} ({m.code})</option>)}
+                  {magasinsHorsDepot.map(m => <option key={m.id} value={m.id}>{m.nom} ({m.code})</option>)}
                 </select>
-              </div>
-            )}
-            {(typeTransfert === 'pharmacie_to_magasin' || typeTransfert === 'magasin_to_magasin') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Magasin destination *</label>
-                <select value={formData.magasin_destination_id} onChange={(e) => setFormData(prev => ({ ...prev, magasin_destination_id: e.target.value }))} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500">
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Magasin Destination *</label>
+              {typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'magasin_to_pharmacie' ? (
+                <input 
+                  type="text" 
+                  value="Pharmacie Principale" 
+                  disabled 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 font-medium" 
+                />
+              ) : (
+                <select 
+                  value={formData.magasin_destination_id} 
+                  onChange={(e) => setFormData(prev => ({ ...prev, magasin_destination_id: e.target.value }))} 
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                >
                   <option value="">Sélectionner un magasin</option>
-                  {magasins.filter(m => m.id !== formData.magasin_source_id).map(m => <option key={m.id} value={m.id}>{m.nom} ({m.code})</option>)}
+                  {magasinsHorsDepot
+                    .filter(m => typeTransfert === 'magasin_to_magasin' ? m.id !== formData.magasin_source_id : true)
+                    .map(m => <option key={m.id} value={m.id}>{m.nom} ({m.code})</option>)}
                 </select>
-              </div>
-            )}
-            {typeTransfert === 'magasin_to_pharmacie' && (
-              <div><label className="block text-sm font-medium text-gray-700 mb-2">Destination</label><input type="text" value="Pharmacie Principale" disabled className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100" /></div>
-            )}
-            {typeTransfert === 'pharmacie_to_magasin' && (
-              <div><label className="block text-sm font-medium text-gray-700 mb-2">Source</label><input type="text" value="Pharmacie Principale" disabled className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100" /></div>
-            )}
+              )}
+            </div>
           </div>
 
           <div className="mb-6">
@@ -576,53 +729,107 @@ export function TransfersManager() {
           <div className="mb-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-semibold text-gray-900">Produits à transférer</h3>
-              <button onClick={ajouterLigne} className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition"><Plus className="w-4 h-4" /> Ajouter un produit</button>
+              <button onClick={ajouterLigne} className="flex items-center gap-2 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition">
+                <Plus className="w-4 h-4" /> Ajouter un produit
+              </button>
             </div>
             
             {formData.lignes.length === 0 ? (
-              <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg"><Package className="w-12 h-12 text-gray-400 mx-auto mb-2" /><p className="text-gray-500">Aucun produit ajouté</p></div>
+              <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+                <Package className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+                <p className="text-gray-500">Aucun produit ajouté</p>
+              </div>
             ) : (
               <div className="space-y-4">
                 {formData.lignes.map((ligne, index) => {
                   const produit = produits.find(p => p.id === ligne.produit_id);
-                  const sourceId = typeTransfert === 'pharmacie_to_magasin' ? null : formData.magasin_source_id;
-                  const stock = getStockDisponibleProduit(sourceId, ligne.produit_id);
+                  const sourceId = (typeTransfert === 'depot_to_pharmacie' || typeTransfert === 'depot_to_magasin') 
+                    ? depotPrincipal?.id 
+                    : formData.magasin_source_id;
+                  const lotsDisponibles = getLotsDisponibles(sourceId, ligne.produit_id);
+                  const lotChoisi = lotsDisponibles.find(l => l.lot_numero === ligne.lot);
                   
                   return (
                     <div key={index} className="flex items-center gap-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
-                      <div className="flex-1 grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-4">
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Produit *</label>
-                          <select value={ligne.produit_id} onChange={(e) => mettreAJourLigne(index, 'produit_id', e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500">
+                          <select 
+                            value={ligne.produit_id} 
+                            onChange={(e) => mettreAJourLigne(index, 'produit_id', e.target.value)} 
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                          >
                             <option value="">Sélectionner</option>
                             {produits.map(p => <option key={p.id} value={p.id}>{p.nom} - {p.code_produit}</option>)}
                           </select>
                         </div>
+                        
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Lot *
+                            {lotChoisi && <span className="ml-1 text-xs text-gray-500">({lotChoisi.quantite} dispo.)</span>}
+                          </label>
+                          <select 
+                            value={ligne.lot} 
+                            onChange={(e) => mettreAJourLigne(index, 'lot', e.target.value)} 
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                            disabled={!ligne.produit_id}
+                          >
+                            <option value="">-- Choisir un lot --</option>
+                            {lotsDisponibles.map(lot => (
+                              <option key={lot.stockId} value={lot.lot_numero}>
+                                {lot.lot_numero} (Qté: {lot.quantite})
+                                {lot.date_expiration ? ` - Exp: ${new Date(lot.date_expiration).toLocaleDateString('fr-FR')}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          {lotChoisi?.date_expiration && (
+                            <p className="text-xs mt-1 text-gray-600">
+                              📅 Péremption: <span className={
+                                new Date(lotChoisi.date_expiration) < new Date(Date.now() + 90*24*60*60*1000) 
+                                  ? 'text-red-600 font-bold' 
+                                  : 'text-green-600'
+                              }>
+                                {new Date(lotChoisi.date_expiration).toLocaleDateString('fr-FR')}
+                              </span>
+                            </p>
+                          )}
+                        </div>
+                        
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
                             Quantité *
-                            {produit && <span className={`ml-2 text-xs ${stock > 0 ? 'text-green-600' : 'text-red-600'}`}>(Stock: {stock})</span>}
+                            {lotChoisi && <span className={`ml-2 text-xs ${lotChoisi.quantite > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              (Max: {lotChoisi.quantite})
+                            </span>}
                           </label>
                           <input 
                             type="number" 
                             min="1" 
-                            max={stock} 
+                            max={lotChoisi?.quantite || 1} 
                             value={ligne.quantite} 
-                            onChange={(e) => mettreAJourLigne(index, 'quantite', parseInt(e.target.value) || 0)} 
-                            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 ${stock === 0 ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-300'}`}
-                            disabled={stock === 0}
+                            onChange={(e) => mettreAJourLigne(index, 'quantite', e.target.value)} 
+                            className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 ${
+                              !ligne.lot ? 'bg-gray-100 border-gray-300' : 
+                              lotChoisi?.quantite === 0 ? 'bg-red-50 border-red-300 text-red-600' : 'border-gray-300'
+                            }`}
+                            disabled={!ligne.lot}
                           />
                         </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Numéro de lot</label>
-                          <input type="text" value={ligne.lot || ''} onChange={(e) => mettreAJourLigne(index, 'lot', e.target.value)} placeholder="Optionnel" className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500" />
-                        </div>
+                        
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">Valeur</label>
-                          <p className="text-lg font-bold text-emerald-600 mt-2">{produit ? (ligne.quantite * produit.prix_vente).toLocaleString('fr-FR') : 0} F</p>
+                          <p className="text-lg font-bold text-emerald-600 mt-2">
+                            {produit ? (ligne.quantite * produit.prix_vente).toLocaleString('fr-FR') : 0} F
+                          </p>
+                        </div>
+                        
+                        <div className="flex items-end">
+                          <button onClick={() => supprimerLigne(index)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition">
+                            <X className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
-                      <button onClick={() => supprimerLigne(index)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"><X className="w-5 h-5" /></button>
                     </div>
                   );
                 })}
@@ -633,13 +840,26 @@ export function TransfersManager() {
           {formData.lignes.length > 0 && (
             <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg mb-6">
               <span className="text-lg font-bold">Valeur totale du transfert:</span>
-              <span className="text-2xl font-bold text-emerald-600">{formData.lignes.reduce((total, ligne) => { const p = produits.find(p => p.id === ligne.produit_id); return total + (p ? ligne.quantite * p.prix_vente : 0); }, 0).toLocaleString('fr-FR')} F</span>
+              <span className="text-2xl font-bold text-emerald-600">
+                {formData.lignes.reduce((total, ligne) => { 
+                  const p = produits.find(p => p.id === ligne.produit_id); 
+                  return total + (p ? ligne.quantite * p.prix_vente : 0); 
+                }, 0).toLocaleString('fr-FR')} F
+              </span>
             </div>
           )}
 
           <div className="flex gap-4">
-            <button onClick={() => setActiveTab('transferts')} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">Annuler</button>
-            <button onClick={creerTransfert} disabled={formLoading || formData.lignes.length === 0 || (typeTransfert !== 'pharmacie_to_magasin' && !formData.magasin_source_id) || (typeTransfert !== 'magasin_to_pharmacie' && !formData.magasin_destination_id)} className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+            <button onClick={() => setActiveTab('transferts')} className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+              Annuler
+            </button>
+            <button 
+              onClick={creerTransfert} 
+              disabled={formLoading || formData.lignes.length === 0 || 
+                (typeTransfert !== 'depot_to_pharmacie' && typeTransfert !== 'depot_to_magasin' && !formData.magasin_source_id) || 
+                (typeTransfert !== 'depot_to_pharmacie' && typeTransfert !== 'magasin_to_pharmacie' && !formData.magasin_destination_id)} 
+              className="flex-1 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+            >
               <Send className="w-5 h-5" />
               {formLoading ? 'Création...' : 'Créer le transfert'}
             </button>
@@ -649,13 +869,13 @@ export function TransfersManager() {
     );
   }
 
-  // Vue principale avec onglets
+  // ✅ CORRECTION MAJEURE : Structure des onglets réparée
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Gestion des Transferts</h2>
-          <p className="text-gray-600 mt-1">Transferts de stocks entre magasins et pharmacie principale</p>
+          <p className="text-gray-600 mt-1">Transferts de stocks entre le dépôt, la pharmacie et les magasins</p>
         </div>
         <div className="flex gap-3">
           <button onClick={loadInitialData} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
@@ -667,7 +887,6 @@ export function TransfersManager() {
         </div>
       </div>
 
-      {/* Onglets */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           <button
@@ -703,7 +922,6 @@ export function TransfersManager() {
         </nav>
       </div>
 
-      {/* Contenu des onglets */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         {activeTab === 'transferts' ? (
           <>
@@ -850,11 +1068,36 @@ export function TransfersManager() {
               </div>
             </div>
 
+            {/* ✅ FILTRE BIEN PLACÉ DANS LE CONTENU DE L'ONGLET (et non dans la navigation) */}
+            <div className="flex items-center gap-4 mb-4 bg-gray-50 border border-gray-200 rounded-lg p-4">
+              <label className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                <Search className="w-4 h-4 text-gray-500" />
+                Filtrer par destination :
+              </label>
+              <select 
+                value={filtreMagasinDest} 
+                onChange={(e) => setFiltreMagasinDest(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 bg-white flex-1 max-w-xs"
+              >
+                <option value="tous"> Tous les magasins ({transfers.filter(t => t.statut === 'en_transit').length})</option>
+                <option value="pharmacie">🏥 Pharmacie Principale ({transfers.filter(t => t.statut === 'en_transit' && !t.magasin_destination_id).length})</option>
+                {magasinsHorsDepot.map(m => (
+                  <option key={m.id} value={m.id}>
+                    🏪 {m.nom} ({transfers.filter(t => t.statut === 'en_transit' && t.magasin_destination_id === m.id).length})
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {transfersEnAttenteDeReception.length === 0 ? (
               <div className="text-center py-12">
                 <Truck className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <p className="text-gray-500 text-lg mb-2">Aucun transfert à réceptionner</p>
-                <p className="text-gray-400 text-sm">Les transferts expédiés apparaîtront ici.</p>
+                <p className="text-gray-400 text-sm">
+                  {filtreMagasinDest !== 'tous' 
+                    ? 'Aucun transfert ne correspond à ce filtre.' 
+                    : 'Les transferts expédiés vers votre magasin apparaîtront ici.'}
+                </p>
               </div>
             ) : (
               transfersEnAttenteDeReception.map((transfert) => {
@@ -875,8 +1118,11 @@ export function TransfersManager() {
                               Expédié le: {new Date(transfert.date_transfert).toLocaleDateString('fr-FR')}
                             </p>
                             <p className="text-sm text-gray-600">
-                              De: {getMagasinNom(transfert.magasin_source_id)} → Vers: {getMagasinNom(transfert.magasin_destination_id)}
+                              De: {getMagasinNom(transfert.magasin_source_id)} → Vers: <strong className="text-blue-700">{getMagasinNom(transfert.magasin_destination_id)}</strong>
                             </p>
+                            <span className="inline-block mt-1 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-medium">
+                              📍 Destination : {getMagasinNom(transfert.magasin_destination_id)}
+                            </span>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">

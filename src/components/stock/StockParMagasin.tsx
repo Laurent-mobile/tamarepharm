@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Package, RefreshCw, Search, Warehouse } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Package, RefreshCw, Search, Warehouse, Building2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { repository } from '../../lib/repository';
 
@@ -25,10 +25,13 @@ export function StockParMagasin() {
   const { utilisateur } = useAuth();
   const [magasins, setMagasins] = useState<Magasin[]>([]);
   const [depotPrincipal, setDepotPrincipal] = useState<Magasin | null>(null);
-  const [selectedMagasin, setSelectedMagasin] = useState<Magasin | null>(null);
+  const [selectedMagasinId, setSelectedMagasinId] = useState<string | null>(null);
   const [allStock, setAllStock] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // ✅ État pour distinguer "Tous", "Pharmacie (null)" et "Magasin spécifique"
+  const [filterType, setFilterType] = useState<'all' | 'null' | 'specific'>('all');
 
   useEffect(() => {
     if (utilisateur && utilisateur.pharmacy_id) {
@@ -40,18 +43,32 @@ export function StockParMagasin() {
     try {
       setLoading(true);
       
-      // 1. Charger les magasins et identifier dynamiquement le dépôt principal
+      // 1. Charger les magasins
       const magasinsData = await repository.getMagasins(utilisateur!.pharmacy_id);
-      setMagasins(magasinsData);
+      setMagasins(magasinsData || []);
       
-      const depot = await repository.getDepotPrincipal(utilisateur!.pharmacy_id);
+      // 2. ✅ FORCER la détection du dépôt principal
+      let depot = await repository.getDepotPrincipal(utilisateur!.pharmacy_id);
+      
+      if (!depot && magasinsData && magasinsData.length > 0) {
+        depot = magasinsData.find(m => 
+          m.type === 'entrepot' || 
+          m.nom.toLowerCase().includes('dépôt') || 
+          m.nom.toLowerCase().includes('depot') ||
+          m.nom.toLowerCase().includes('principal')
+        ) || null;
+      }
+      
+      if (!depot && magasinsData && magasinsData.length > 0) {
+        depot = magasinsData[0];
+      }
+      
       setDepotPrincipal(depot);
 
-      // 2. Charger TOUT le stock en une seule fois (très rapide en local)
+      // 3. Charger TOUT le stock et les produits
       const stockData = await repository.getStock(utilisateur!.pharmacy_id);
       const produitsData = await repository.getProduits(utilisateur!.pharmacy_id);
       
-      // Enrichir le stock avec les noms des produits
       const stockEnrichi = stockData.map(item => ({
         ...item,
         produits: produitsData.find(p => p.id === item.produit_id)
@@ -59,11 +76,16 @@ export function StockParMagasin() {
       
       setAllStock(stockEnrichi);
 
-      // 3. Sélectionner le dépôt principal par défaut, sinon le premier magasin
+      // 4. ✅ SÉLECTIONNER AUTOMATIQUEMENT LE DÉPÔT PRINCIPAL
       if (depot) {
-        setSelectedMagasin(depot);
-      } else if (magasinsData.length > 0) {
-        setSelectedMagasin(magasinsData[0]);
+        console.log('✅ Dépôt principal sélectionné par défaut:', depot.nom, depot.id);
+        setSelectedMagasinId(depot.id);
+        setFilterType('specific');
+      } else if (stockData && stockData.length > 0) {
+        const premierMagasinId = stockData.find(s => s.magasin_id)?.magasin_id;
+        console.log('⚠️ Pas de dépôt trouvé, utilisation du premier magasin du stock:', premierMagasinId);
+        setSelectedMagasinId(premierMagasinId || null);
+        setFilterType(premierMagasinId ? 'specific' : 'all');
       }
     } catch (error) {
       console.error('❌ Erreur chargement données stock:', error);
@@ -72,18 +94,84 @@ export function StockParMagasin() {
     }
   };
 
-  // Filtrage dynamique du stock en fonction du magasin sélectionné et de la recherche
-  const filteredStock = allStock.filter(item => {
-    // Filtrer par l'ID du magasin sélectionné (le dépôt principal a maintenant son propre ID grâce à la migration)
-    const matchMagasin = selectedMagasin ? item.magasin_id === selectedMagasin.id : item.magasin_id === null;
+  const magasinsIdsDansStock = useMemo(() => {
+    const ids = new Set<string | null>();
+    allStock.forEach(item => ids.add(item.magasin_id));
+    return Array.from(ids);
+  }, [allStock]);
+
+  const emplacementsDisponibles = useMemo(() => {
+    const emplacements: Array<{ id: string | null; nom: string; type: string; icon: string }> = [];
     
-    const matchSearch = !searchTerm || 
-      item.produits?.nom?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.produits?.code_produit?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.lot_numero?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    return matchMagasin && matchSearch && item.quantite > 0;
-  });
+    // 1. Pharmacie Principale (magasin_id = null)
+    emplacements.push({
+      id: null,
+      nom: 'Pharmacie Principale',
+      type: 'pharmacie',
+      icon: '🏥'
+    });
+
+    // 2. Dépôt Principal
+    if (depotPrincipal) {
+      emplacements.push({
+        id: depotPrincipal.id,
+        nom: `${depotPrincipal.nom} (Dépôt Principal)`,
+        type: 'entrepot',
+        icon: '🏭'
+      });
+    }
+
+    // 3. Autres magasins
+    magasins
+      .filter(m => m.id !== depotPrincipal?.id)
+      .forEach(m => {
+        emplacements.push({
+          id: m.id,
+          nom: m.nom,
+          type: m.type || 'magasin',
+          icon: '🏪'
+        });
+      });
+
+    // 4. Magasins inconnus présents dans le stock
+    magasinsIdsDansStock.forEach(magasinId => {
+      if (magasinId === null) return;
+      if (depotPrincipal && magasinId === depotPrincipal.id) return;
+      if (magasins.some(m => m.id === magasinId)) return;
+      
+      emplacements.push({
+        id: magasinId,
+        nom: `Magasin inconnu (${magasinId.slice(0, 8)}...)`,
+        type: 'inconnu',
+        icon: '⚠️'
+      });
+    });
+
+    return emplacements;
+  }, [magasins, depotPrincipal, allStock, magasinsIdsDansStock]);
+
+  // ✅ CORRECTION : Filtrage robuste SANS duplication de variable
+  const filteredStock = useMemo(() => {
+    return allStock.filter(item => {
+      let matchMagasin = true;
+      
+      if (filterType === 'null') {
+        // Uniquement Pharmacie Principale (magasin_id = null)
+        matchMagasin = item.magasin_id === null;
+      } else if (filterType === 'specific' && selectedMagasinId) {
+        // Uniquement un magasin spécifique
+        matchMagasin = item.magasin_id === selectedMagasinId;
+      }
+      // Si filterType === 'all', matchMagasin reste true (Tous les emplacements)
+      
+      const matchSearch = !searchTerm || 
+        item.produits?.nom?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.produits?.code_produit?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.lot_numero?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      return matchMagasin && matchSearch && item.quantite > 0;
+    });
+  }, [allStock, selectedMagasinId, filterType, searchTerm]);
 
   const getStockStatusColor = (quantite: number) => {
     if (quantite === 0) return 'bg-red-100 text-red-700';
@@ -93,6 +181,8 @@ export function StockParMagasin() {
 
   const totalUnites = filteredStock.reduce((sum, s) => sum + (s.quantite || 0), 0);
   const totalValeur = filteredStock.reduce((sum, s) => sum + ((s.quantite || 0) * (s.produits?.prix_vente || 0)), 0);
+
+  const emplacementActuel = emplacementsDisponibles.find(e => e.id === selectedMagasinId);
 
   return (
     <div className="space-y-6">
@@ -106,32 +196,55 @@ export function StockParMagasin() {
         </button>
       </div>
 
-      {/* Sélecteur de magasin et recherche */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex flex-col md:flex-row md:items-center gap-4">
         <div className="flex-1">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Sélectionner un emplacement</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Sélectionner un emplacement ({emplacementsDisponibles.length} disponible(s))
+          </label>
           <select
-            value={selectedMagasin?.id || ''}
+            value={selectedMagasinId ?? ''}
             onChange={(e) => {
-              if (!e.target.value) {
-                setSelectedMagasin(null);
+              const value = e.target.value;
+              // ✅ CORRECTION : Mise à jour conjointe de filterType et selectedMagasinId
+              if (value === '') {
+                setFilterType('all');
+                setSelectedMagasinId(null); 
+              } else if (value === 'pharmacie-principale') {
+                setFilterType('null');
+                setSelectedMagasinId(null); 
               } else {
-                const magasin = magasins.find(m => m.id === e.target.value);
-                setSelectedMagasin(magasin || depotPrincipal);
+                setFilterType('specific');
+                setSelectedMagasinId(value);
               }
             }}
             className="w-full md:w-96 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
           >
-            <option value="">-- Choisir un emplacement --</option>
+            <option value="">-- Tous les emplacements --</option>
+            
             {depotPrincipal && (
-              <option value={depotPrincipal.id}>🏭 {depotPrincipal.nom} (Dépôt Principal)</option>
+              <option key={depotPrincipal.id} value={depotPrincipal.id}>
+                🏭 {depotPrincipal.nom} (Dépôt Principal) - {allStock.filter(s => s.magasin_id === depotPrincipal.id && s.quantite > 0).length} produits
+              </option>
             )}
+            
+            <option value="pharmacie-principale">
+               🏥 Pharmacie Principale - {allStock.filter(s => s.magasin_id === null && s.quantite > 0).length} produits
+            </option>
+            
             {magasins
-              .filter(m => m.id !== depotPrincipal?.id) // Exclure le dépôt de la liste pour éviter les doublons
+              .filter(m => m.id !== depotPrincipal?.id)
               .map((magasin) => (
-                <option key={magasin.id} value={magasin.id}>🏪 {magasin.nom} ({magasin.code})</option>
+                <option key={magasin.id} value={magasin.id}>
+                  🏪 {magasin.nom} ({magasin.code}) - {allStock.filter(s => s.magasin_id === magasin.id && s.quantite > 0).length} produits
+                </option>
               ))}
           </select>
+          
+          {depotPrincipal && (
+            <p className="text-xs text-gray-500 mt-1">
+               ID Dépôt Principal : <code className="bg-gray-100 px-1 rounded">{depotPrincipal.id}</code>
+            </p>
+          )}
         </div>
         <div className="flex-1">
           <label className="block text-sm font-medium text-gray-700 mb-2">Recherche rapide</label>
@@ -148,56 +261,73 @@ export function StockParMagasin() {
         </div>
       </div>
 
-      {/* Statistiques du magasin sélectionné */}
-      {selectedMagasin && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Références en stock</p>
-                <p className="text-2xl font-bold text-gray-900">{filteredStock.length}</p>
-              </div>
-              <Package className="w-8 h-8 text-blue-500" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Emplacement actuel</p>
+              <p className="text-lg font-bold text-gray-900">
+                {emplacementActuel ? `${emplacementActuel.icon} ${emplacementActuel.nom}` : 'Tous'}
+              </p>
             </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total unités</p>
-                <p className="text-2xl font-bold text-emerald-600">{totalUnites}</p>
-              </div>
-              <span className="text-2xl">📦</span>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Valeur totale (PV)</p>
-                <p className="text-2xl font-bold text-amber-600">{totalValeur.toLocaleString('fr-FR')} F</p>
-              </div>
-              <span className="text-2xl">💰</span>
-            </div>
+            <Building2 className="w-8 h-8 text-blue-500" />
           </div>
         </div>
-      )}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Total unités</p>
+              <p className="text-2xl font-bold text-emerald-600">{totalUnites}</p>
+            </div>
+            <Package className="w-8 h-8 text-emerald-500" />
+          </div>
+        </div>
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-600">Valeur totale (PV)</p>
+              <p className="text-2xl font-bold text-amber-600">{totalValeur.toLocaleString('fr-FR')} F</p>
+            </div>
+            <span className="text-2xl">💰</span>
+          </div>
+        </div>
+      </div>
 
-      {/* Tableau des stocks */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         {loading ? (
           <div className="flex justify-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div>
           </div>
-        ) : !selectedMagasin ? (
-          <div className="text-center py-12">
-            <Warehouse className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-500 text-lg mb-2">Veuillez sélectionner un magasin</p>
-            <p className="text-gray-400 text-sm">Choisissez un emplacement dans le menu déroulant ci-dessus pour voir son inventaire.</p>
-          </div>
         ) : filteredStock.length === 0 ? (
           <div className="text-center py-12">
-            <Package className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <Warehouse className="w-16 h-16 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500 text-lg mb-2">Aucun stock trouvé</p>
-            <p className="text-gray-400 text-sm">{searchTerm ? 'Aucun résultat pour votre recherche' : 'Ce magasin ne contient pas encore de stock.'}</p>
+            <p className="text-gray-400 text-sm">
+              {filterType === 'all' 
+                ? 'Aucun stock dans aucun emplacement.' 
+                : searchTerm 
+                  ? 'Aucun résultat pour votre recherche.' 
+                  : 'Cet emplacement ne contient pas de stock.'}
+            </p>
+            
+            {/* ✅ DEBUG : Afficher les IDs des magasins dans le stock */}
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg text-left text-xs">
+              <p className="font-bold mb-2"> Debug - Magasins présents dans le stock :</p>
+              <ul className="space-y-1">
+                {magasinsIdsDansStock.map((id, idx) => (
+                  <li key={idx} className="font-mono">
+                    {id === null ? '🏥 Pharmacie Principale (null)' : ` ${id}`}
+                    {depotPrincipal && id === depotPrincipal.id && ' ✅ = Dépôt Principal'}
+                    {magasins.some(m => m.id === id) && ` (${magasins.find(m => m.id === id)?.nom})`}
+                  </li>
+                ))}
+              </ul>
+              {depotPrincipal && (
+                <p className="mt-2 text-blue-600">
+                   ID Dépôt Principal attendu : <code>{depotPrincipal.id}</code>
+                </p>
+              )}
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -217,8 +347,8 @@ export function StockParMagasin() {
                   const isExpired = item.date_expiration && new Date(item.date_expiration) < new Date();
                   return (
                     <tr key={item.id} className="border-b border-gray-100 hover:bg-gray-50 transition">
-                      <td className="py-3 px-4 font-medium">{item.produits?.nom}</td>
-                      <td className="py-3 px-4 font-mono text-sm text-gray-600">{item.produits?.code_produit}</td>
+                      <td className="py-3 px-4 font-medium">{item.produits?.nom || 'Produit inconnu'}</td>
+                      <td className="py-3 px-4 font-mono text-sm text-gray-600">{item.produits?.code_produit || '-'}</td>
                       <td className="py-3 px-4 font-mono text-sm text-blue-600">{item.lot_numero || '-'}</td>
                       <td className="py-3 px-4 text-center">
                         <span className={`px-2 py-1 rounded-full text-xs font-bold ${getStockStatusColor(item.quantite)}`}>
