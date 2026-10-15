@@ -52,36 +52,44 @@ export function AuxiliaryManager() {
   }, [typeDeVente, selectedClient]);
 
   const loadInitialData = async () => {
-    if (!utilisateur?.pharmacy_id) return;
-    try {
-      const [productsData, clientsData, assurancesData, stockData] = await Promise.all([
-        repository.getProduits(utilisateur.pharmacy_id),
-        repository.getClients(utilisateur.pharmacy_id),
-        repository.getAssurances(utilisateur.pharmacy_id),
-        repository.getStock(utilisateur.pharmacy_id),
-      ]);
+  if (!utilisateur?.pharmacy_id) return;
+  try {
+    const [productsData, clientsData, assurancesData, stockData] = await Promise.all([
+      repository.getProduits(utilisateur.pharmacy_id),
+      repository.getClients(utilisateur.pharmacy_id),
+      repository.getAssurances(utilisateur.pharmacy_id),
+      repository.getStock(utilisateur.pharmacy_id),
+    ]);
 
-      setProducts(productsData || []);
-      setClients(clientsData || []);
-      setAssurances(assurancesData || []);
-      
-      const stockMap: Record<string, { disponible: number; total: number }> = {};
-      stockData?.forEach(item => {
+    setProducts(productsData || []);
+    setClients(clientsData || []);
+    setAssurances(assurancesData || []);
+    
+    const stockMap: Record<string, { disponible: number; total: number }> = {};
+    
+    // ✅ CORRECTION : Ne compter que le stock de la Pharmacie Principale (magasin_id = null)
+    stockData?.forEach(item => {
+      // On ne prend que les stocks de la Pharmacie Principale (magasin_id = null)
+      if (item.magasin_id === null) {
         if (stockMap[item.produit_id]) {
           stockMap[item.produit_id].total += item.quantite || 0;
           stockMap[item.produit_id].disponible += item.quantite || 0;
         } else {
           stockMap[item.produit_id] = { total: item.quantite || 0, disponible: item.quantite || 0 };
         }
-      });
-      productsData.forEach(product => {
-        if (!stockMap[product.id]) stockMap[product.id] = { total: 0, disponible: 0 };
-      });
-      setStockVerification(stockMap);
-    } catch (error) {
-      console.error('❌ Erreur chargement données:', error);
-    }
-  };
+      }
+    });
+    
+    productsData.forEach(product => {
+      if (!stockMap[product.id]) stockMap[product.id] = { total: 0, disponible: 0 };
+    });
+    setStockVerification(stockMap);
+    
+    console.log(' Stock Pharmacie Principale chargé:', Object.keys(stockMap).length, 'produits');
+  } catch (error) {
+    console.error('❌ Erreur chargement données:', error);
+  }
+};
 
   const addToCart = (produit: LocalProduit) => {
     const stockDisponible = stockVerification[produit.id]?.disponible || 0;
@@ -119,7 +127,7 @@ export function AuxiliaryManager() {
   const estPlafondDepasse = typeDeVente === 'credit' && plafondCredit > 0 && depassementPlafond > 0;
   const montantCreditReel = estPlafondDepasse ? (montantPatient - montantPayeComptant) : montantPatient;
 
-  const validerCommande = async () => {
+ const validerCommande = async () => {
   if (cart.length === 0) { alert('Veuillez ajouter des produits au panier'); return; }
   if (typeDeVente === 'bon' && !numeroBon.trim()) { alert('Veuillez saisir le numéro du bon'); return; }
   if (typeDeVente === 'credit' && (!clientData || !dateLimiteCredit)) { alert('Veuillez sélectionner un client autorisé au crédit'); return; }
@@ -140,9 +148,10 @@ export function AuxiliaryManager() {
   try {
     const numeroVente = `V-${Date.now().toString().slice(-6)}`;
     
-    // ✅ SÉPARATION CLAIRE DES MONTANTS
+    // ✅ EXPLICITEMENT définir le magasin_id à null (Pharmacie Principale)
     const venteData = {
       pharmacy_id: utilisateur!.pharmacy_id,
+      magasin_id: null, // ✅ Force l'utilisation de la Pharmacie Principale
       client_id: selectedClient || null,
       numero_vente: numeroVente,
       date_vente: new Date().toISOString().split('T')[0],
@@ -172,7 +181,7 @@ export function AuxiliaryManager() {
     
     // ✅ MESSAGE CLAIR SELON LE CAS
     if (estPlafondDepasse && montantPayeComptant > 0) {
-      alert(`✅ Commande ${numeroVente} validée !\n\n💰 Montant à encaisser à la caisse : ${montantPayeComptant.toLocaleString('fr-FR')} F\n📊 Montant en crédit : ${montantCreditReel.toLocaleString('fr-FR')} F\n\nLe crédit sera tracé dans le compte client.`);
+      alert(`✅ Commande ${numeroVente} validée !\n\n💰 Montant à encaisser à la caisse : ${montantPayeComptant.toLocaleString('fr-FR')} F\n Montant en crédit : ${montantCreditReel.toLocaleString('fr-FR')} F\n\nLe crédit sera tracé dans le compte client.`);
     } else {
       alert(`✅ Commande ${numeroVente} validée et envoyée à la caisse!`);
     }

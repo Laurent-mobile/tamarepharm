@@ -1,6 +1,5 @@
-// src/components/cashier/CashierMenu.tsx
 import { useState, useEffect } from 'react';
-import { Play, Check, Clock, Users, DollarSign, Calculator, RefreshCw, Lock, Unlock, LogOut } from 'lucide-react';
+import { Play, Check, Clock, Users, DollarSign, Calculator, RefreshCw, Lock, Unlock, LogOut, Power, Smartphone, CreditCard, Banknote, FileText } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { repository } from '../../lib/repository';
 import { LocalVente, LocalVenteLigne, LocalClient, LocalAssurance, LocalProduit } from '../../lib/localDb';
@@ -18,10 +17,18 @@ export function CashierMenu() {
   const [fileAttente, setFileAttente] = useState<FileAttenteItem[]>([]);
   const [venteEnCours, setVenteEnCours] = useState<FileAttenteItem | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  // États de paiement
   const [montantPerçu, setMontantPerçu] = useState('');
   const [monnaieRendue, setMonnaieRendue] = useState(0);
+  const [typePaiement, setTypePaiement] = useState<'especes' | 'mobile_money' | 'carte' | 'cheque'>('especes');
+  const [operateurMobile, setOperateurMobile] = useState('Orange Money');
+  const [numTransaction, setNumTransaction] = useState('');
+  
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [sessionOuverte, setSessionOuverte] = useState(true); // Simplifié pour l'offline
+  const [sessionOuverte, setSessionOuverte] = useState(true); // Mode démo simplifié
+  const [showCloseModal, setShowCloseModal] = useState(false);
+  const [fondCaisseFinal, setFondCaisseFinal] = useState('');
 
   useEffect(() => {
     if (utilisateur) {
@@ -47,15 +54,14 @@ export function CashierMenu() {
   const loadFileAttente = async () => {
     if (!utilisateur?.pharmacy_id) return;
     try {
-      // ✅ LECTURE LOCALE (Fonctionne parfaitement hors-ligne)
       const ventesEnAttente = await repository.getVentesEnAttente(utilisateur.pharmacy_id);
-      
       const items: FileAttenteItem[] = [];
+      
       for (const vente of ventesEnAttente) {
         const lignes = await repository.getVenteLignes(vente.id);
-        
         let client = null;
         let assurance = null;
+        
         if (vente.client_id) {
           const clients = await repository.getClients(utilisateur.pharmacy_id);
           client = clients.find(c => c.id === vente.client_id) || null;
@@ -73,16 +79,29 @@ export function CashierMenu() {
 
         items.push({ vente, lignes: lignesEnrichies, client, assurance });
       }
-      
       setFileAttente(items);
     } catch (error) {
       console.error('❌ Erreur chargement file attente (local):', error);
     }
   };
 
+  const commencerPaiement = (item: FileAttenteItem) => {
+    setVenteEnCours(item);
+    setActiveSection('caisse');
+    setMontantPerçu('');
+    setMonnaieRendue(0);
+    setTypePaiement('especes');
+    setNumTransaction('');
+  };
+
   const finaliserPaiement = async () => {
     if (!venteEnCours || !montantPerçu) {
       alert('Veuillez saisir le montant perçu');
+      return;
+    }
+
+    if (typePaiement === 'mobile_money' && !numTransaction.trim()) {
+      alert('Veuillez saisir le numéro de transaction Mobile Money');
       return;
     }
 
@@ -93,23 +112,25 @@ export function CashierMenu() {
     }
 
     const monnaie = perçu - venteEnCours.vente.montant_patient;
-    
     setLoading(true);
+
     try {
-      // ✅ MISE À JOUR LOCALE + SYNC AUTOMATIQUE EN ARRIÈRE-PLAN
       await repository.updateVente(venteEnCours.vente.id, {
         statut: 'payee',
         caissier_id: utilisateur!.id,
         montant_percu: perçu,
         monnaie_rendue: monnaie > 0 ? monnaie : 0,
+        type_paiement: typePaiement,
+        operateur_mobile: typePaiement === 'mobile_money' ? operateurMobile : null,
+        numero_transaction_mobile: typePaiement === 'mobile_money' ? numTransaction : null,
       });
 
-      // Générer le ticket
-      await generateTicket(venteEnCours, perçu, monnaie > 0 ? monnaie : 0);
+      await generateTicket(venteEnCours, perçu, monnaie > 0 ? monnaie : 0, typePaiement);
 
       alert('✅ Paiement finalisé avec succès!');
       setVenteEnCours(null);
       setMontantPerçu('');
+      setNumTransaction('');
       await loadFileAttente();
     } catch (error: any) {
       console.error('❌ Erreur finalisation:', error);
@@ -119,7 +140,7 @@ export function CashierMenu() {
     }
   };
 
-  const generateTicket = async (item: FileAttenteItem, montantPerçu: number, monnaieRendue: number) => {
+  const generateTicket = async (item: FileAttenteItem, montantPerçu: number, monnaieRendue: number, modePaiement: string) => {
     try {
       const ticketWindow = window.open('', '_blank', 'width=350,height=600');
       if (!ticketWindow) {
@@ -178,6 +199,7 @@ export function CashierMenu() {
                 <div class="payment-line"><span>Total produits:</span><span>${Number(vente.montant_total).toLocaleString('fr-FR')} F</span></div>
                 ${isClientAssure ? `<div class="payment-line" style="color: #0066cc;"><span>Prise en charge assurance:</span><span>- ${Number(vente.montant_assurance).toLocaleString('fr-FR')} F</span></div>` : ''}
                 <div class="payment-line" style="font-weight: bold; border-top: 1px solid #000; padding-top: 5px;"><span>Total à payer:</span><span>${Number(vente.montant_patient).toLocaleString('fr-FR')} F</span></div>
+                <div class="payment-line"><span>Mode de paiement:</span><span>${modePaiement.toUpperCase()}</span></div>
                 <div class="payment-line"><span>Montant perçu:</span><span>${montantPerçu.toLocaleString('fr-FR')} F</span></div>
                 <div class="payment-line"><span>Monnaie rendue:</span><span>${monnaieRendue.toLocaleString('fr-FR')} F</span></div>
             </div>
@@ -265,6 +287,12 @@ export function CashierMenu() {
 
         <div className="p-4 space-y-3 border-t border-blue-700">
           <button
+            onClick={() => setShowCloseModal(true)}
+            className="w-full flex items-center justify-center gap-3 py-3 bg-red-600/80 text-white rounded-xl hover:bg-red-600 transition font-medium"
+          >
+            <Power className="w-5 h-5" /> Arrêter la caisse
+          </button>
+          <button
             onClick={signOut}
             className="w-full flex items-center justify-center gap-3 py-3 border border-blue-600 text-blue-100 rounded-xl hover:bg-blue-700 transition"
           >
@@ -329,11 +357,7 @@ export function CashierMenu() {
                         </div>
                       </div>
                       <button
-                        onClick={() => {
-                          setVenteEnCours(item);
-                          setActiveSection('caisse');
-                          setMontantPerçu('');
-                        }}
+                        onClick={() => commencerPaiement(item)}
                         disabled={loading}
                         className="w-full flex items-center justify-center gap-2 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 mt-3"
                       >
@@ -347,7 +371,7 @@ export function CashierMenu() {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* File d'attente réduite */}
+              {/* File d'attente réduite (Gauche) */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <Clock className="w-5 h-5" />
@@ -357,13 +381,10 @@ export function CashierMenu() {
                   <p className="text-gray-500 text-center py-8">Aucune commande en attente</p>
                 ) : (
                   <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                    {fileAttente.map((item, index) => (
+                    {fileAttente.map((item) => (
                       <div 
                         key={item.vente.id} 
-                        onClick={() => {
-                          setVenteEnCours(item);
-                          setMontantPerçu('');
-                        }}
+                        onClick={() => commencerPaiement(item)}
                         className={`p-4 border rounded-lg cursor-pointer transition ${venteEnCours?.vente.id === item.vente.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:shadow-md'}`}
                       >
                         <div className="flex justify-between items-center">
@@ -379,7 +400,7 @@ export function CashierMenu() {
                 )}
               </div>
 
-              {/* Paiement en cours */}
+              {/* Paiement en cours (Droite) */}
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
                   <DollarSign className="w-5 h-5" />
@@ -413,6 +434,44 @@ export function CashierMenu() {
                         </div>
                       ))}
                     </div>
+
+                    {/* Sélecteur de mode de paiement */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Mode de paiement</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button onClick={() => setTypePaiement('especes')} className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition ${typePaiement === 'especes' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <Banknote className="w-5 h-5" /> Espèces
+                        </button>
+                        <button onClick={() => setTypePaiement('mobile_money')} className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition ${typePaiement === 'mobile_money' ? 'border-orange-500 bg-orange-50 text-orange-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <Smartphone className="w-5 h-5" /> Mobile Money
+                        </button>
+                        <button onClick={() => setTypePaiement('carte')} className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition ${typePaiement === 'carte' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <CreditCard className="w-5 h-5" /> Carte
+                        </button>
+                        <button onClick={() => setTypePaiement('cheque')} className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 transition ${typePaiement === 'cheque' ? 'border-purple-500 bg-purple-50 text-purple-700' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <FileText className="w-5 h-5" /> Chèque
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Champs dynamiques pour Mobile Money */}
+                    {typePaiement === 'mobile_money' && (
+                      <div className="grid grid-cols-2 gap-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Opérateur</label>
+                          <select value={operateurMobile} onChange={(e) => setOperateurMobile(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            <option>Orange Money</option>
+                            <option>Moov Money</option>
+                            <option>Wave</option>
+                            <option>Autre</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">N° Transaction *</label>
+                          <input type="text" value={numTransaction} onChange={(e) => setNumTransaction(e.target.value)} placeholder="Ex: 84739201" className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
+                        </div>
+                      </div>
+                    )}
 
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
                       <h5 className="font-bold text-blue-900 mb-3 flex items-center gap-2">
@@ -455,6 +514,7 @@ export function CashierMenu() {
                         onClick={() => {
                           setVenteEnCours(null);
                           setMontantPerçu('');
+                          setNumTransaction('');
                         }}
                         disabled={loading}
                         className="flex-1 py-4 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition disabled:opacity-50 font-medium"
@@ -463,7 +523,7 @@ export function CashierMenu() {
                       </button>
                       <button
                         onClick={finaliserPaiement}
-                        disabled={loading || !montantPerçu || parseFloat(montantPerçu) < venteEnCours.vente.montant_patient}
+                        disabled={loading || !montantPerçu || parseFloat(montantPerçu) < venteEnCours.vente.montant_patient || (typePaiement === 'mobile_money' && !numTransaction)}
                         className="flex-1 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2 font-medium text-lg"
                       >
                         <Check className="w-6 h-6" />
@@ -477,6 +537,54 @@ export function CashierMenu() {
           )}
         </div>
       </main>
+
+      {/* Modal de fermeture de caisse */}
+      {showCloseModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4 text-red-600">
+              <Power className="w-8 h-8" />
+              <h3 className="text-xl font-bold">Arrêter la session de caisse</h3>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Veuillez compter le fond de caisse physique (espèces) et saisir le montant final pour clôturer la session.
+            </p>
+            
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Fond de caisse final déclaré (FCFA) *</label>
+              <input 
+                type="number" 
+                value={fondCaisseFinal} 
+                onChange={(e) => setFondCaisseFinal(e.target.value)} 
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-2 focus:ring-red-500 focus:border-red-500 text-xl font-bold"
+                placeholder="Ex: 150000"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={() => { setShowCloseModal(false); setFondCaisseFinal(''); }} 
+                className="flex-1 py-3 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 font-medium"
+              >
+                Annuler
+              </button>
+              <button 
+                onClick={() => {
+                  alert(`✅ Caisse fermée avec succès !\nFond final déclaré: ${parseFloat(fondCaisseFinal || '0').toLocaleString('fr-FR')} F`);
+                  setSessionOuverte(false);
+                  setShowCloseModal(false);
+                  setFondCaisseFinal('');
+                }} 
+                disabled={!fondCaisseFinal} 
+                className="flex-1 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 font-bold disabled:opacity-50"
+              >
+                Confirmer la fermeture
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

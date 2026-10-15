@@ -135,7 +135,8 @@ export const repository = {
     const venteId = data.id || uuidv4();
     const now = new Date().toISOString();
     
-    // ✅ AUTO-DÉTECTION DU MAGASIN DE VENTE (Pharmacie) si non fourni explicitement
+    // ✅ AUTO-DÉTECTION DU MAGASIN DE VENTE (Pharmacie)
+    // Si le magasin_id n'est pas fourni, on le cherche automatiquement
     let magasinId = data.magasin_id;
     if (magasinId === undefined) {
       const magasins = await this.getMagasins(data.pharmacy_id);
@@ -143,8 +144,8 @@ export const repository = {
       const magasinPharmacie = magasins?.find(m => 
         m.nom.toLowerCase().includes('pharmacie') || m.type === 'pharmacie'
       );
-      // Fallback : si on ne trouve pas, on prend le premier magasin disponible
-      magasinId = magasinPharmacie?.id || magasins?.[0]?.id || null;
+      // Fallback : si on ne trouve pas, on prend null (qui représente souvent la Pharmacie Principale)
+      magasinId = magasinPharmacie?.id || null;
     }
 
     // On enregistre explicitement le magasin_id dans la vente pour la traçabilité
@@ -253,7 +254,7 @@ export const repository = {
     return true;
   },
   // ✅ FONCTION CORRIGÉE : Décrémenter le stock en respectant le magasin source et le lot (FEFO)
-     async decrementerStock(pharmacyId: string, produitId: string, quantite: number, lot?: string, magasinId?: string | null) {
+      async decrementerStock(pharmacyId: string, produitId: string, quantite: number, lot?: string, magasinId?: string | null) {
     const allStock = await localDb.stock.toArray();
     
     const stockItems = allStock

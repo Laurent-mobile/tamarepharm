@@ -7,7 +7,7 @@ import { NotificationsSettings } from './NotificationsSettings';
 import { SecuritySettings } from './SecuritySettings';
 import { UsersManager } from './UsersManager';
 import { MagasinsManager } from './MagasinsManager';
-import { InventoryParMagasin } from '../inventory/InventoryParMagasin';
+   import { InventoryManager } from "../inventory/InventoryManager";
 
 export function SettingsManager() {
   const [activeTab, setActiveTab] = useState<'roles' | 'users' | 'pharmacy' | 'notifications' | 'security'>('roles');
@@ -39,7 +39,7 @@ export function SettingsManager() {
 		case 'magasins':
   return <MagasinsManager />;
 		case 'inventaires_magasin':
-  return <InventoryParMagasin />;
+  return <InventoryManager />;
     }
   };
 
