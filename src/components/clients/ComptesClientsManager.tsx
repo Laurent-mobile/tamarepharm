@@ -11,12 +11,10 @@ export function ComptesClientsManager() {
   const [clients, setClients] = useState<LocalClient[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // États pour les modales et formulaires
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [selectedCompte, setSelectedCompte] = useState<LocalCompteClient | null>(null);
   const [historique, setHistorique] = useState<LocalHistoriqueConsommationCompte[]>([]);
 
-  // États pour le formulaire de dépôt
   const [depotData, setDepotData] = useState({
     client_id: '',
     type_compte: 'avoir' as 'avoir' | 'credit_bon',
@@ -77,7 +75,6 @@ export function ComptesClientsManager() {
     }
   };
 
-  // ✅ NOUVEAU : Filtrage dynamique des clients selon le type de dépôt sélectionné
   const clientsFiltresPourDepot = useMemo(() => {
     if (depotData.type_compte === 'avoir') {
       return clients.filter(c => c.autorise_avoir === true);
@@ -87,14 +84,12 @@ export function ComptesClientsManager() {
     return clients;
   }, [clients, depotData.type_compte]);
 
-  // Calcul des totaux pour le dashboard
   const stats = useMemo(() => {
     const totalAvoir = comptes.filter(c => c.type_compte === 'avoir').reduce((sum, c) => sum + c.solde_actuel, 0);
     const totalCreditBon = comptes.filter(c => c.type_compte === 'credit_bon').reduce((sum, c) => sum + c.solde_actuel, 0);
     return { totalAvoir, totalCreditBon, totalComptes: comptes.length };
   }, [comptes]);
 
-  // Calcul pour l'état de recouvrement (Groupé par Société)
   const etatRecouvrement = useMemo(() => {
     const recouvrement: Record<string, { societe: string, total_consomme: number, nb_employes: number, employes: string[] }> = {};
     const comptesCreditBon = comptes.filter(c => c.type_compte === 'credit_bon');
@@ -126,7 +121,6 @@ export function ComptesClientsManager() {
         </div>
       </div>
 
-      {/* Navigation par onglets */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="flex border-b border-gray-200">
           <button onClick={() => setActiveTab('dashboard')} className={`px-6 py-4 font-medium border-b-2 transition ${activeTab === 'dashboard' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -141,7 +135,6 @@ export function ComptesClientsManager() {
         </div>
 
         <div className="p-6">
-          {/* ONGLET 1 : TABLEAU DE BORD */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -220,7 +213,6 @@ export function ComptesClientsManager() {
             </div>
           )}
 
-          {/* ONGLET 2 : NOUVEAU DÉPÔT */}
           {activeTab === 'depot' && (
             <div className="max-w-2xl mx-auto bg-white rounded-xl border border-gray-200 p-8">
               <h3 className="text-xl font-bold text-gray-900 mb-6 flex items-center gap-2">
@@ -258,7 +250,6 @@ export function ComptesClientsManager() {
                       ))}
                     </select>
                     
-                    {/* ✅ Message d'avertissement si aucun client ne correspond aux critères */}
                     {clientsFiltresPourDepot.length === 0 && (
                       <p className="text-sm text-red-600 mt-2 flex items-center gap-2 bg-red-50 p-3 rounded-lg border border-red-200">
                         <AlertCircle className="w-5 h-5 flex-shrink-0" /> 
@@ -295,7 +286,6 @@ export function ComptesClientsManager() {
             </div>
           )}
 
-          {/* ONGLET 3 : ÉTATS DE RECOUVREMENT */}
           {activeTab === 'recouvrement' && (
             <div className="space-y-6">
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
@@ -333,8 +323,20 @@ export function ComptesClientsManager() {
                         <td className="px-4 py-4 text-sm text-gray-500">{item.employes.join(', ')}</td>
                       </tr>
                     ))}
+                    {/* ✅ MESSAGE D'AIDE AMÉLIORÉ */}
                     {etatRecouvrement.length === 0 && (
-                      <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-500">Aucun crédit bon actif à recouvrer pour le moment.</td></tr>
+                      <tr>
+                        <td colSpan={4} className="px-4 py-12 text-center text-gray-500">
+                          <div className="flex flex-col items-center gap-3">
+                            <Building2 className="w-12 h-12 text-gray-300" />
+                            <p className="font-medium">Aucun crédit bon actif à recouvrer pour le moment.</p>
+                            <p className="text-sm text-gray-400 max-w-md">
+                              💡 <strong>Astuce :</strong> Cet onglet affiche uniquement les dépôts de type <span className="font-bold text-blue-600">"Crédit Bon (Société)"</span>. 
+                              Les "Avoirs (Espèces)" n'apparaissent pas ici. Allez dans l'onglet <span className="font-bold text-emerald-600">"Nouveau Dépôt"</span> pour en créer un.
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -344,7 +346,6 @@ export function ComptesClientsManager() {
         </div>
       </div>
 
-      {/* MODALE HISTORIQUE */}
       {showHistoryModal && selectedCompte && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl">

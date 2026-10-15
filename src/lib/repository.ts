@@ -588,48 +588,102 @@ export const repository = {
   },
 
   async enregistrerDepotClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon', montant: number, societeReference?: string, description?: string) {
+    // Vérifier si un compte existe déjà pour ce client et ce type
+    const compteExistant = await localDb.comptes_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(c => c.client_id === clientId && c.type_compte === typeCompte)
+      .first();
+
     const now = new Date().toISOString();
-    let compte = await this.getCompteClient(pharmacyId, clientId, typeCompte);
-    
-    if (!compte) {
-      const nouveauCompteId = uuidv4();
-      compte = {
-        id: nouveauCompteId,
+
+    if (compteExistant) {
+      const nouveauSolde = compteExistant.solde_actuel + montant;
+      await localDb.comptes_clients.update(compteExistant.id, {
+        solde_actuel: nouveauSolde,
+        updated_at: now,
+        _sync_status: 'pending_update'
+      });
+      await syncEngine.logOperation('comptes_clients', compteExistant.id, 'update', { solde_actuel: nouveauSolde });
+
+      // Historique
+      await localDb.historique_consommation_comptes.add({
+        id: uuidv4(),
+        pharmacy_id: pharmacyId,
+        compte_client_id: compteExistant.id,
+        client_id: clientId,
+        type_operation: 'depot',
+        montant: montant,
+        solde_avant_operation: compteExistant.solde_actuel,
+        solde_apres_operation: nouveauSolde,
+        description: description || `Dépôt ${typeCompte}`,
+        date_operation: now,
+        _sync_status: 'pending_create'
+      });
+      return compteExistant;
+    } else {
+      const nouveauCompte = {
+        id: uuidv4(),
         pharmacy_id: pharmacyId,
         client_id: clientId,
         type_compte: typeCompte,
-        solde_actuel: 0,
+        solde_actuel: montant,
         societe_reference: societeReference || null,
+        description: description || null,
         created_at: now,
         updated_at: now,
         _sync_status: 'pending_create'
       };
-      await localDb.comptes_clients.add(compte);
+      await localDb.comptes_clients.add(nouveauCompte);
+      await syncEngine.logOperation('comptes_clients', nouveauCompte.id, 'create', nouveauCompte);
+
+      await localDb.historique_consommation_comptes.add({
+        id: uuidv4(),
+        pharmacy_id: pharmacyId,
+        compte_client_id: nouveauCompte.id,
+        client_id: clientId,
+        type_operation: 'depot',
+        montant: montant,
+        solde_avant_operation: 0,
+        solde_apres_operation: montant,
+        description: description || `Dépôt initial ${typeCompte}`,
+        date_operation: now,
+        _sync_status: 'pending_create'
+      });
+      return nouveauCompte;
+    }
+  },
+  // ✅ NOUVEAU : Consommer un compte (avoir ou crédit bon) lors d'une vente
+    async consommerCompte(compteId: string, montant: number, venteId: string, description?: string) {
+    const compte = await localDb.comptes_clients.get(compteId);
+    if (!compte) throw new Error('Compte client introuvable');
+    if (montant > compte.solde_actuel) {
+      throw new Error(`Montant (${montant}) supérieur au solde disponible (${compte.solde_actuel})`);
     }
 
-    const nouveauSolde = compte.solde_actuel + montant;
-    await localDb.comptes_clients.update(compte.id, { 
-      solde_actuel: nouveauSolde, 
+    const nouveauSolde = compte.solde_actuel - montant;
+    const now = new Date().toISOString();
+
+    await localDb.comptes_clients.update(compteId, {
+      solde_actuel: nouveauSolde,
       updated_at: now,
       _sync_status: 'pending_update'
     });
+    await syncEngine.logOperation('comptes_clients', compteId, 'update', { solde_actuel: nouveauSolde });
 
-    const historiqueId = uuidv4();
+    // ✅ CORRECTION : Nom de la table au singulier et champs correspondants au schéma SQL
     await localDb.historique_consommation_compte.add({
-      id: historiqueId,
-      compte_id: compte.id,
-      type_operation: 'depot',
+      id: uuidv4(),
+      compte_id: compteId,
+      vente_id: venteId,
+      type_operation: 'consommation',
       montant: montant,
       solde_apres_operation: nouveauSolde,
       date_operation: now,
-      description: description || 'Dépôt espèces',
+      description: description || `Utilisation pour vente ${venteId}`,
       _sync_status: 'pending_create'
     });
-    
-    await syncEngine.logOperation('comptes_clients', compte.id, 'update', { solde_actuel: nouveauSolde });
-    await syncEngine.logOperation('historique_consommation_compte', historiqueId, 'create', { compte_id: compte.id, montant, type_operation: 'depot' });
 
-    return nouveauSolde;
+    return { nouveauSolde };
   },
 
   async consommerSoldeClient(pharmacyId: string, clientId: string, typeCompte: 'avoir' | 'credit_bon', montantConsomme: number, venteId: string) {
@@ -669,9 +723,21 @@ export const repository = {
 
   async getAllComptesClients(pharmacyId: string) {
     return await localDb.comptes_clients
-      .where('pharmacy_id')
-      .equals(pharmacyId)
-      .and(c => c.solde_actuel > 0 || c.type_compte === 'avoir')
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(c => c.solde_actuel > 0)
+      .toArray();
+      },
+
+       async getComptesAvoirsClient(pharmacyId: string, clientId: string) {
+    return await localDb.comptes_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(c => c.client_id === clientId && c.type_compte === 'avoir' && c.solde_actuel > 0)
+      .toArray();
+  },
+  async getComptesActifsClient(pharmacyId: string, clientId: string) {
+    return await localDb.comptes_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(c => c.client_id === clientId && c.solde_actuel > 0)
       .toArray();
   },
 
@@ -685,6 +751,68 @@ export const repository = {
 
   async getAllClientsForAccounts(pharmacyId: string) {
     return await localDb.clients.where('pharmacy_id').equals(pharmacyId).toArray();
+  },
+
+    // ═══════════════════════════════════════
+  // AVOIRS CLIENTS
+  // ═══════════════════════════════════════
+  async getAvoirsClient(pharmacyId: string, clientId: string) {
+    return await localDb.avoirs_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(a => a.client_id === clientId && a.statut === 'actif' && a.montant_restant > 0)
+      .toArray();
+  },
+
+  async getAvoirsActifs(pharmacyId: string) {
+    return await localDb.avoirs_clients
+      .where('pharmacy_id').equals(pharmacyId)
+      .and(a => a.statut === 'actif' && a.montant_restant > 0)
+      .toArray();
+  },
+
+  async utiliserAvoir(avoirId: string, montantUtilise: number, venteId: string) {
+    const avoir = await localDb.avoirs_clients.get(avoirId);
+    if (!avoir) throw new Error('Avoir introuvable');
+    if (montantUtilise > avoir.montant_restant) {
+      throw new Error(`Montant utilisé (${montantUtilise}) supérieur au solde disponible (${avoir.montant_restant})`);
+    }
+
+    const nouveauRestant = avoir.montant_restant - montantUtilise;
+    const nouveauStatut = nouveauRestant <= 0 ? 'utilise' : 'actif';
+
+    await localDb.avoirs_clients.update(avoirId, {
+      montant_utilise: avoir.montant_utilise + montantUtilise,
+      montant_restant: nouveauRestant,
+      statut: nouveauStatut,
+      updated_at: new Date().toISOString(),
+      _sync_status: 'pending_update'
+    });
+
+    await syncEngine.logOperation('avoirs_clients', avoirId, 'update', {
+      montant_utilise: avoir.montant_utilise + montantUtilise,
+      montant_restant: nouveauRestant,
+      statut: nouveauStatut
+    });
+
+    return { nouveauRestant, nouveauStatut };
+  },
+
+  async createAvoir(data: any) {
+    const id = data.id || uuidv4();
+    const now = new Date().toISOString();
+    const avoir = {
+      ...data,
+      id,
+      montant_utilise: 0,
+      montant_restant: data.montant,
+      statut: 'actif',
+      created_at: now,
+      updated_at: now,
+      _sync_status: 'pending_create'
+    };
+    await localDb.avoirs_clients.add(avoir);
+    await syncEngine.logOperation('avoirs_clients', id, 'create', avoir);
+    return avoir;
   },
 
   // ═══════════════════════════════════════

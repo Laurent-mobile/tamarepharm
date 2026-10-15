@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Play, Check, Clock, Users, DollarSign, Calculator, RefreshCw, Lock, Unlock, LogOut, Power, Smartphone, CreditCard, Banknote, FileText } from 'lucide-react';
+import { Play, Check, Clock, Users, DollarSign, Calculator, RefreshCw, Lock, Unlock, LogOut, Power, Smartphone, CreditCard, Banknote, FileText, CheckCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { repository } from '../../lib/repository';
 import { LocalVente, LocalVenteLigne, LocalClient, LocalAssurance, LocalProduit } from '../../lib/localDb';
@@ -18,7 +18,6 @@ export function CashierMenu() {
   const [venteEnCours, setVenteEnCours] = useState<FileAttenteItem | null>(null);
   const [loading, setLoading] = useState(false);
   
-  // États de paiement
   const [montantPerçu, setMontantPerçu] = useState('');
   const [monnaieRendue, setMonnaieRendue] = useState(0);
   const [typePaiement, setTypePaiement] = useState<'especes' | 'mobile_money' | 'carte' | 'cheque'>('especes');
@@ -26,7 +25,7 @@ export function CashierMenu() {
   const [numTransaction, setNumTransaction] = useState('');
   
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [sessionOuverte, setSessionOuverte] = useState(true); // Mode démo simplifié
+  const [sessionOuverte, setSessionOuverte] = useState(true);
   const [showCloseModal, setShowCloseModal] = useState(false);
   const [fondCaisseFinal, setFondCaisseFinal] = useState('');
 
@@ -39,17 +38,6 @@ export function CashierMenu() {
       }
     }
   }, [utilisateur, autoRefresh]);
-
-  useEffect(() => {
-    if (montantPerçu && venteEnCours) {
-      const perçu = parseFloat(montantPerçu) || 0;
-      const total = venteEnCours.vente.montant_patient;
-      const monnaie = perçu - total;
-      setMonnaieRendue(monnaie > 0 ? monnaie : 0);
-    } else {
-      setMonnaieRendue(0);
-    }
-  }, [montantPerçu, venteEnCours]);
 
   const loadFileAttente = async () => {
     if (!utilisateur?.pharmacy_id) return;
@@ -88,44 +76,53 @@ export function CashierMenu() {
   const commencerPaiement = (item: FileAttenteItem) => {
     setVenteEnCours(item);
     setActiveSection('caisse');
-    setMontantPerçu('');
+    
+    // ✅ CORRECTION : Calcul correct du montant à encaisser
+    const isCreditOuAvoir = item.vente.type_de_vente === 'credit' || item.vente.type_de_vente === 'avoir';
+    const montantAEncaisser = isCreditOuAvoir 
+      ? (item.vente.montant_paye_comptant || 0) 
+      : item.vente.montant_patient;
+
+    setMontantPerçu(montantAEncaisser.toString());
     setMonnaieRendue(0);
     setTypePaiement('especes');
     setNumTransaction('');
   };
 
   const finaliserPaiement = async () => {
-    if (!venteEnCours || !montantPerçu) {
-      alert('Veuillez saisir le montant perçu');
+    if (!venteEnCours) {
+      alert('Aucune vente sélectionnée');
       return;
     }
 
-    if (typePaiement === 'mobile_money' && !numTransaction.trim()) {
-      alert('Veuillez saisir le numéro de transaction Mobile Money');
+    const percu = parseFloat(montantPerçu) || 0;
+    
+    // ✅ CORRECTION : Le minimum requis dépend du type de vente
+    const isCreditOuAvoir = venteEnCours.vente.type_de_vente === 'credit' || venteEnCours.vente.type_de_vente === 'avoir';
+    const minimumRequis = isCreditOuAvoir 
+      ? (venteEnCours.vente.montant_paye_comptant || 0) 
+      : venteEnCours.vente.montant_patient;
+
+    if (percu < minimumRequis) {
+      alert(`Le montant perçu (${percu.toLocaleString('fr-FR')} F) est inférieur au minimum requis (${minimumRequis.toLocaleString('fr-FR')} F)`);
       return;
     }
 
-    const perçu = parseFloat(montantPerçu);
-    if (perçu < venteEnCours.vente.montant_patient) {
-      alert(`Le montant perçu (${perçu.toLocaleString('fr-FR')} F) est inférieur au total (${venteEnCours.vente.montant_patient.toLocaleString('fr-FR')} F)`);
-      return;
-    }
-
-    const monnaie = perçu - venteEnCours.vente.montant_patient;
+    const monnaie = Math.max(0, percu - venteEnCours.vente.montant_patient);
     setLoading(true);
 
     try {
       await repository.updateVente(venteEnCours.vente.id, {
         statut: 'payee',
         caissier_id: utilisateur!.id,
-        montant_percu: perçu,
-        monnaie_rendue: monnaie > 0 ? monnaie : 0,
+        montant_percu: percu,
+        monnaie_rendue: monnaie,
         type_paiement: typePaiement,
         operateur_mobile: typePaiement === 'mobile_money' ? operateurMobile : null,
         numero_transaction_mobile: typePaiement === 'mobile_money' ? numTransaction : null,
       });
 
-      await generateTicket(venteEnCours, perçu, monnaie > 0 ? monnaie : 0, typePaiement);
+      await generateTicket(venteEnCours, percu, monnaie, typePaiement);
 
       alert('✅ Paiement finalisé avec succès!');
       setVenteEnCours(null);
@@ -198,6 +195,8 @@ export function CashierMenu() {
             <div class="payment-section">
                 <div class="payment-line"><span>Total produits:</span><span>${Number(vente.montant_total).toLocaleString('fr-FR')} F</span></div>
                 ${isClientAssure ? `<div class="payment-line" style="color: #0066cc;"><span>Prise en charge assurance:</span><span>- ${Number(vente.montant_assurance).toLocaleString('fr-FR')} F</span></div>` : ''}
+                ${vente.montant_credit > 0 ? `<div class="payment-line" style="color: #0066cc;"><span>Part Crédit:</span><span>- ${Number(vente.montant_credit).toLocaleString('fr-FR')} F</span></div>` : ''}
+                ${vente.montant_avoir_utilise > 0 ? `<div class="payment-line" style="color: #0066cc;"><span>Part Avoir:</span><span>- ${Number(vente.montant_avoir_utilise).toLocaleString('fr-FR')} F</span></div>` : ''}
                 <div class="payment-line" style="font-weight: bold; border-top: 1px solid #000; padding-top: 5px;"><span>Total à payer:</span><span>${Number(vente.montant_patient).toLocaleString('fr-FR')} F</span></div>
                 <div class="payment-line"><span>Mode de paiement:</span><span>${modePaiement.toUpperCase()}</span></div>
                 <div class="payment-line"><span>Montant perçu:</span><span>${montantPerçu.toLocaleString('fr-FR')} F</span></div>
@@ -221,7 +220,7 @@ export function CashierMenu() {
       ticketWindow.document.write(ticketContent);
       ticketWindow.document.close();
     } catch (error: any) {
-      console.error('❌ Erreur génération ticket:', error);
+      console.error(' Erreur génération ticket:', error);
     }
   };
 
@@ -245,6 +244,13 @@ export function CashierMenu() {
       </div>
     );
   }
+
+  // ✅ CORRECTION : Calcul correct du montant à encaisser
+  const isCreditOuAvoir = venteEnCours ? (venteEnCours.vente.type_de_vente === 'credit' || venteEnCours.vente.type_de_vente === 'avoir') : false;
+  const montantAEncaisser = venteEnCours 
+    ? (isCreditOuAvoir ? (venteEnCours.vente.montant_paye_comptant || 0) : venteEnCours.vente.montant_patient) 
+    : 0;
+  const estPaiementIntegral = montantAEncaisser === 0;
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -483,27 +489,66 @@ export function CashierMenu() {
                           <span className="font-medium">Total à payer:</span>
                           <span className="font-bold text-2xl text-blue-700">{venteEnCours.vente.montant_patient.toLocaleString('fr-FR')} F</span>
                         </div>
+
+                        {/* ✅ RÉCAPITULATIF CORRIGÉ */}
+                        {isCreditOuAvoir && (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-sm space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Total de la vente:</span>
+                              <span className="font-medium">{venteEnCours.vente.montant_patient.toLocaleString('fr-FR')} F</span>
+                            </div>
+                            {venteEnCours.vente.montant_credit > 0 && (
+                              <div className="flex justify-between text-blue-700">
+                                <span>📊 Part imputée au crédit:</span>
+                                <span className="font-bold">- {venteEnCours.vente.montant_credit.toLocaleString('fr-FR')} F</span>
+                              </div>
+                            )}
+                            {venteEnCours.vente.montant_avoir_utilise > 0 && (
+                              <div className="flex justify-between text-green-700">
+                                <span>🎫 Part couverte par avoir:</span>
+                                <span className="font-bold">- {venteEnCours.vente.montant_avoir_utilise.toLocaleString('fr-FR')} F</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between font-bold text-amber-800 border-t border-amber-300 pt-1 mt-1">
+                              <span>💰 Reste à encaisser (Espèces):</span>
+                              <span>{montantAEncaisser.toLocaleString('fr-FR')} F</span>
+                            </div>
+                          </div>
+                        )}
+
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Montant perçu (FCFA):</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Montant perçu (FCFA):
+                          </label>
                           <input
                             type="number"
                             value={montantPerçu}
                             onChange={(e) => setMontantPerçu(e.target.value)}
-                            className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-xl font-semibold"
+                            disabled={estPaiementIntegral}
+                            className={`w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-xl font-semibold ${
+                              estPaiementIntegral ? 'bg-gray-100 cursor-not-allowed text-gray-500' : 'bg-white'
+                            }`}
                             placeholder="Saisir le montant perçu"
-                            autoFocus
+                            autoFocus={!estPaiementIntegral}
                           />
+                          {estPaiementIntegral && (
+                            <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              Montant déjà couvert - Aucun paiement en espèces requis
+                            </p>
+                          )}
                         </div>
+
                         {monnaieRendue > 0 && (
                           <div className="flex justify-between items-center p-3 bg-green-100 rounded-lg">
                             <span className="font-medium text-green-800 text-lg">Monnaie à rendre:</span>
                             <span className="font-bold text-green-800 text-2xl">{monnaieRendue.toLocaleString('fr-FR')} F</span>
                           </div>
                         )}
-                        {montantPerçu && parseFloat(montantPerçu) < venteEnCours.vente.montant_patient && (
+                        {!estPaiementIntegral && montantPerçu && parseFloat(montantPerçu) < montantAEncaisser && (
                           <div className="flex justify-between items-center p-3 bg-red-100 rounded-lg">
                             <span className="font-medium text-red-800">Montant insuffisant:</span>
-                            <span className="font-bold text-red-800">{(venteEnCours.vente.montant_patient - parseFloat(montantPerçu)).toLocaleString('fr-FR')} F</span>
+                            <span className="font-bold text-red-800">{(montantAEncaisser - parseFloat(montantPerçu)).toLocaleString('fr-FR')} F</span>
                           </div>
                         )}
                       </div>
@@ -523,11 +568,15 @@ export function CashierMenu() {
                       </button>
                       <button
                         onClick={finaliserPaiement}
-                        disabled={loading || !montantPerçu || parseFloat(montantPerçu) < venteEnCours.vente.montant_patient || (typePaiement === 'mobile_money' && !numTransaction)}
+                        disabled={loading || (!estPaiementIntegral && (!montantPerçu || parseFloat(montantPerçu) < montantAEncaisser))}
                         className="flex-1 py-4 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition disabled:opacity-50 flex items-center justify-center gap-2 font-medium text-lg"
                       >
                         <Check className="w-6 h-6" />
-                        {loading ? 'Traitement...' : 'Finaliser paiement'}
+                        {loading ? 'Traitement...' : (
+                          estPaiementIntegral 
+                            ? 'Valider et Imprimer (0 F)' 
+                            : (venteEnCours.vente.type_de_vente === 'credit' ? 'Encaisser le reliquat' : 'Finaliser paiement')
+                        )}
                       </button>
                     </div>
                   </div>
