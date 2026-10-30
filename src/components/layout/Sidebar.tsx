@@ -33,6 +33,7 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
     { id: 'ventes', label: 'Ventes', icon: ShoppingCart },
     { id: 'ventes-structures', label: 'Ventes Structures', icon: Building2 },
     { id: 'caissier', label: 'Gestion Caisse', icon: CreditCard },
+    { id: 'rapports-caisse', label: 'Rapports de Caisse', icon: BarChart3 },
     { id: 'historique-ventes', label: 'Historique Ventes', icon: BarChart3 },
     { id: 'paiements-assurances', label: 'Paiements Assurances', icon: Shield },
     { id: 'produits', label: 'Produits', icon: Package },

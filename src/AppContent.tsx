@@ -16,6 +16,7 @@ import { SettingsManager } from './components/settings/SettingsManager';
 import { AssurancePaymentsManager } from './components/assurances/AssurancePaymentsManager';
 import { CashierMenu } from './components/cashier/CashierMenu';
 import { StockTabs } from './components/stock/StockTabs';
+import { RapportCaisseManager } from './components/reports/RapportCaisseManager';
 import { ComptesClientsManager } from './components/clients/ComptesClientsManager';
 import { PaiementComptantManager } from './components/orders/PaiementComptantManager';
 import { PertesPerimesManager } from './components/stock/PertesPerimesManager'; // ✅ NOUVEAU IMPORT
@@ -67,12 +68,12 @@ export function AppContent() {
     const permissions = {
       admin: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true, 'comptes-clients': true, 'ventes-structures': true,
+        'historique-ventes': true, 'paiements-assurances': true, clients: true, 'rapports-caisse': true, 'comptes-clients': true, 'ventes-structures': true,
         fournisseurs: true, commandes: true, transferts: true, inventaires: true, 'pertes-perimes': true, parametres: true
       },
       pharmacien: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true, 'ventes-structures': true,
+        'historique-ventes': true,'rapports-caisse': true, 'paiements-assurances': true, clients: true, 'ventes-structures': true,
         fournisseurs: true, commandes: true, transferts: true, inventaires: true, 'pertes-perimes': true, parametres: false
       },
       vendeur: {
@@ -176,6 +177,7 @@ export function AppContent() {
         case 'ventes': return <SalesManager />;
         case 'ventes-structures': return <PaiementComptantManager />;
         case 'caissier': return <CashierMenu />;
+        case 'rapports-caisse': return <RapportCaisseManager />;
         case 'historique-ventes': return <SalesHistory />;
         case 'paiements-assurances': return <AssurancePaymentsManager />;
         case 'clients': return <ClientsManager />;
@@ -293,6 +295,7 @@ function getSectionTitle(section: string): string {
     caissier: 'Gestion de Caisse',
     'historique-ventes': 'Historique des Ventes',
     'paiements-assurances': 'Paiements Assurances',
+    'rapports-caisse': 'Rapports de Caisse',
     clients: 'Gestion des Clients',
     'comptes-clients': 'Comptes & Dépôts Clients',
     'pertes-perimes': 'Pertes & Périmés', // ✅ NOUVEAU TITRE
@@ -314,6 +317,7 @@ function getSectionDescription(section: string): string {
     caissier: 'Interface dédiée pour les opérations de caisse',
     'historique-ventes': 'Historique complet des ventes',
     'paiements-assurances': 'Gestion des réclamations assurances',
+    'rapports-caisse': 'Analyse détaillée des encaissements et écarts',
     clients: 'Gestion de la clientèle et assurances',
     'comptes-clients': 'Suivi des avoirs, crédits et recouvrements',
     'pertes-perimes': 'Déclaration et suivi des produits périmés ou déclassés', // ✅ NOUVELLE DESCRIPTION
