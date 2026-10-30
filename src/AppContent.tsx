@@ -18,6 +18,7 @@ import { CashierMenu } from './components/cashier/CashierMenu';
 import { StockTabs } from './components/stock/StockTabs';
 import { ComptesClientsManager } from './components/clients/ComptesClientsManager';
 import { PaiementComptantManager } from './components/orders/PaiementComptantManager';
+import { PertesPerimesManager } from './components/stock/PertesPerimesManager'; // ✅ NOUVEAU IMPORT
 
 export function AppContent() {
   const { user, utilisateur, loading, error, signOut, retryLoadUser, refreshSession, dataVersion, refreshData } = useAuth();
@@ -66,23 +67,23 @@ export function AppContent() {
     const permissions = {
       admin: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true,'comptes-clients': true,'ventes-structures': true,
-        fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: true
+        'historique-ventes': true, 'paiements-assurances': true, clients: true, 'comptes-clients': true, 'ventes-structures': true,
+        fournisseurs: true, commandes: true, transferts: true, inventaires: true, 'pertes-perimes': true, parametres: true
       },
       pharmacien: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': true, clients: true,'ventes-structures': true,
-        fournisseurs: true, commandes: true, transferts: true, inventaires: true, parametres: false
+        'historique-ventes': true, 'paiements-assurances': true, clients: true, 'ventes-structures': true,
+        fournisseurs: true, commandes: true, transferts: true, inventaires: true, 'pertes-perimes': true, parametres: false
       },
       vendeur: {
         dashboard: true, produits: true, stock: true, ventes: true, caissier: false,
-        'historique-ventes': true, 'paiements-assurances': false, clients: true,'comptes-clients': false,'ventes-structures': true,
-        fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
+        'historique-ventes': true, 'paiements-assurances': false, clients: true, 'comptes-clients': false, 'ventes-structures': true,
+        fournisseurs: false, commandes: false, transferts: false, inventaires: false, 'pertes-perimes': true, parametres: false
       },
       caissier: {
         dashboard: true, produits: false, stock: false, ventes: false, caissier: true,
-        'historique-ventes': true, 'paiements-assurances': false, clients: false,'comptes-clients': true,'ventes-structures': true,
-        fournisseurs: false, commandes: false, transferts: false, inventaires: false, parametres: false
+        'historique-ventes': true, 'paiements-assurances': false, clients: false, 'comptes-clients': true, 'ventes-structures': true,
+        fournisseurs: false, commandes: false, transferts: false, inventaires: false, 'pertes-perimes': false, parametres: false
       },
     };
 
@@ -173,12 +174,13 @@ export function AppContent() {
         case 'produits': return <ProductsManager />;
         case 'stock': return <StockTabs />;
         case 'ventes': return <SalesManager />;
-        case 'ventes-structures':return <PaiementComptantManager />;
+        case 'ventes-structures': return <PaiementComptantManager />;
         case 'caissier': return <CashierMenu />;
         case 'historique-ventes': return <SalesHistory />;
         case 'paiements-assurances': return <AssurancePaymentsManager />;
         case 'clients': return <ClientsManager />;
-        case 'comptes-clients':return <ComptesClientsManager />;
+        case 'comptes-clients': return <ComptesClientsManager />;
+        case 'pertes-perimes': return <PertesPerimesManager />; // ✅ NOUVEAU ROUTAGE
         case 'fournisseurs': return <SuppliersManager />;
         case 'commandes': return <OrdersManager />;
         case 'transferts': return <TransfersManager />;
@@ -212,7 +214,6 @@ export function AppContent() {
   };
 
   return (
-    // ✅ AJOUT DE w-full ET overflow-hidden POUR ÉVITER LES DÉBORDEMENTS
     <div className="flex h-screen bg-gray-50 w-full overflow-hidden">
       <Sidebar 
         activeSection={activeSection} 
@@ -220,7 +221,6 @@ export function AppContent() {
         user={utilisateur!}
       />
       
-      {/* ✅ MODIFICATION ICI : w-full au lieu de max-w-7xl mx-auto */}
       <main className="flex-1 overflow-y-auto w-full bg-gray-50">
         <div className="w-full px-4 sm:px-6 lg:px-8 py-6">
           
@@ -294,6 +294,8 @@ function getSectionTitle(section: string): string {
     'historique-ventes': 'Historique des Ventes',
     'paiements-assurances': 'Paiements Assurances',
     clients: 'Gestion des Clients',
+    'comptes-clients': 'Comptes & Dépôts Clients',
+    'pertes-perimes': 'Pertes & Périmés', // ✅ NOUVEAU TITRE
     fournisseurs: 'Gestion des Fournisseurs',
     commandes: 'Gestion des Commandes',
     transferts: 'Gestion des Transferts',
@@ -313,6 +315,8 @@ function getSectionDescription(section: string): string {
     'historique-ventes': 'Historique complet des ventes',
     'paiements-assurances': 'Gestion des réclamations assurances',
     clients: 'Gestion de la clientèle et assurances',
+    'comptes-clients': 'Suivi des avoirs, crédits et recouvrements',
+    'pertes-perimes': 'Déclaration et suivi des produits périmés ou déclassés', // ✅ NOUVELLE DESCRIPTION
     fournisseurs: 'Fournisseurs agréés',
     commandes: 'Workflow complet : Pro-forma → Commande → Réception',
     transferts: 'Transferts entre pharmacies et sous-dépôts',

@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, Eye, Building2, FileText, Gift, CreditCard, TrendingUp, Printer, X, ArrowDownCircle, ArrowUpCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { repository } from '../../lib/repository';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 import { LocalCompteClient, LocalHistoriqueConsommationCompte, LocalClient } from '../../lib/localDb';
 
 export function ComptesClientsManager() {
@@ -111,6 +113,56 @@ export function ComptesClientsManager() {
   }, [comptes, clients]);
 
   if (loading) return <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-emerald-600"></div></div>;
+  const exporterRecouvrementPDF = () => {
+    const doc = new jsPDF();
+    const pharmacyName = "PHARMACIE TAMAR"; // Vous pouvez rendre ceci dynamique plus tard
+
+    // En-tête
+    doc.setFontSize(18);
+    doc.setTextColor(41, 128, 185);
+    doc.text(`ÉTAT DE RECOUVREMENT`, 105, 20, { align: 'center' });
+    
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    doc.text(`Émetteur : ${pharmacyName}`, 14, 35);
+    doc.text(`Date d'édition : ${new Date().toLocaleDateString('fr-FR')}`, 14, 42);
+
+    // Préparation des données pour le tableau
+    const totalGeneral = etatRecouvrement.reduce((sum, item) => sum + item.total_consomme, 0);
+    const tableData = etatRecouvrement.map(item => [
+      item.societe,
+      item.nb_employes.toString(),
+      `${item.total_consomme.toLocaleString('fr-FR')} F`,
+      item.employes.join(', ')
+    ]);
+
+    // Génération du tableau
+    (doc as any).autoTable({
+      startY: 50,
+      head: [['Société Émettrice', 'Nb. Employés', 'Montant à Recouvrer', 'Employés concernés']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+      foot: [['TOTAL GÉNÉRAL', '', `${totalGeneral.toLocaleString('fr-FR')} F`, '']],
+      footStyles: { fillColor: [240, 240, 240], textColor: 0, fontStyle: 'bold' },
+      styles: { fontSize: 10, cellPadding: 3 },
+      columnStyles: {
+        0: { cellWidth: 50 },
+        1: { cellWidth: 30, halign: 'center' },
+        2: { cellWidth: 40, halign: 'right' },
+        3: { cellWidth: 'auto' }
+      }
+    });
+
+    // Pied de page
+    const finalY = (doc as any).lastAutoTable.finalY + 20;
+    doc.setFontSize(10);
+    doc.text("Signature et cachet de la pharmacie :", 14, finalY);
+    doc.line(14, finalY + 20, 80, finalY + 20);
+
+    // Sauvegarde
+    doc.save(`Recouvrement_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
 
   return (
     <div className="space-y-6 w-full">
@@ -297,9 +349,14 @@ export function ComptesClientsManager() {
                     Imprimez cet état pour aller récupérer l'argent.
                   </p>
                 </div>
-                <button onClick={() => window.print()} className="ml-auto flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                  <Printer className="w-4 h-4" /> Imprimer l'état
-                </button>
+                <div className="flex gap-3">
+  <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">
+    <Printer className="w-4 h-4" /> Imprimer
+  </button>
+  <button onClick={exporterRecouvrementPDF} className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+    <FileText className="w-4 h-4" /> Exporter en PDF
+  </button>
+</div>
               </div>
 
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">

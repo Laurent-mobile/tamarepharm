@@ -15,7 +15,8 @@ import {
   Activity,
   Shield,
   CreditCard,
-  Wallet // ✅ Ajout de l'icône pour les comptes/dépôts
+  Wallet,
+  AlertTriangle // ✅ Ajout de l'icône pour Pertes & Périmés
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -37,7 +38,8 @@ export function Sidebar({ activeSection, onSectionChange }: SidebarProps) {
     { id: 'produits', label: 'Produits', icon: Package },
     { id: 'stock', label: 'Stock', icon: Building2 },
     { id: 'clients', label: 'Clients', icon: Users },
-    { id: 'comptes-clients', label: 'Comptes & Dépôts', icon: Wallet }, // ✅ NOUVEAU MENU
+    { id: 'comptes-clients', label: 'Comptes & Dépôts', icon: Wallet },
+    { id: 'pertes-perimes', label: 'Pertes & Périmés', icon: AlertTriangle }, // ✅ NOUVEAU MENU
     { id: 'fournisseurs', label: 'Fournisseurs', icon: UserCog },
     { id: 'commandes', label: 'Commandes', icon: Truck },
     { id: 'transferts', label: 'Transferts', icon: ArrowLeftRight },

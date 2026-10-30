@@ -797,6 +797,8 @@ export const repository = {
     return { nouveauRestant, nouveauStatut };
   },
 
+
+  
   async createAvoir(data: any) {
     const id = data.id || uuidv4();
     const now = new Date().toISOString();
@@ -815,6 +817,54 @@ export const repository = {
     return avoir;
   },
 
+    async declarerPerteOuPerime(
+    pharmacyId: string, 
+    stockId: string, 
+    quantite: number, 
+    motif: 'perime' | 'casse' | 'vol' | 'erreur_inventaire', 
+    remarques: string, 
+    utilisateurId: string
+  ) {
+    const stockItem = await localDb.stock.get(stockId);
+    if (!stockItem) throw new Error('Lot de stock introuvable');
+    if (quantite > stockItem.quantite) throw new Error('Quantité déclarée supérieure au stock disponible');
+
+    const nouvelleQuantite = stockItem.quantite - quantite;
+    const now = new Date().toISOString();
+    const nouveauStatut = nouvelleQuantite === 0 ? (motif === 'perime' ? 'perime' : 'declasse') : stockItem.statut;
+
+    // 1. Mettre à jour le stock
+    await localDb.stock.update(stockId, {
+      quantite: nouvelleQuantite,
+      statut: nouveauStatut,
+      updated_at: now,
+      _sync_status: 'pending_update'
+    });
+    await syncEngine.logOperation('stock', stockId, 'update', { quantite: nouvelleQuantite, statut: nouveauStatut });
+
+    // 2. Enregistrer dans l'historique des ajustements
+    const ajustement = {
+      id: uuidv4(),
+      pharmacy_id: pharmacyId,
+      produit_id: stockItem.produit_id,
+      stock_id: stockId,
+      type_operation: 'ajustement',
+      quantite_avant: stockItem.quantite,
+      quantite_apres: nouvelleQuantite,
+      quantite_ajustee: -quantite, // Négatif car c'est une perte
+      type_ajustement: motif,
+      motif: remarques || `Déclaration automatique: ${motif}`,
+      lot_numero: stockItem.lot_numero,
+      utilisateur_id: utilisateurId,
+      date_operation: now,
+      _sync_status: 'pending_create'
+    };
+
+    await localDb.historique_ajustements_stock.add(ajustement);
+    await syncEngine.logOperation('historique_ajustements_stock', ajustement.id, 'create', ajustement);
+
+    return ajustement;
+  },
   // ═══════════════════════════════════════
   // PROFORMA & PAIEMENT COMPTANT
   // ═══════════════════════════════════════
