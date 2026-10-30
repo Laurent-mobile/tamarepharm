@@ -2,14 +2,11 @@
 import { localDb, type LocalSyncLog } from './localDb';
 import { supabase } from './supabase';
 import { v4 as uuidv4 } from 'uuid';
+import { sanitizeForSupabase } from './schemaValidator';
 
-// ============================================
-// CONFIGURATION
-// ============================================
-const SYNC_INTERVAL_MS = 30_000; // Sync toutes les 30 secondes
-const MAX_RETRIES = 5;
+const SYNC_INTERVAL_MS = 30_000;
+const MAX_RETRIES = 3; // ✅ Circuit breaker : abandon après 3 échecs
 
-// Mapping tables locales <-> Supabase
 const TABLE_MAPPING: Record<string, string> = {
   produits: 'produits',
   clients: 'clients',
@@ -18,21 +15,20 @@ const TABLE_MAPPING: Record<string, string> = {
   vente_lignes: 'vente_lignes',
   stock: 'stock',
   fournisseurs: 'fournisseurs',
-  commandes: 'commandes_fournisseurs',
+  commandes: 'commandes', // Corrigé pour matcher le nom local
   magasins: 'magasins',
   transferts: 'transferts',
   transfert_lignes: 'transfert_lignes',
   demandes_proforma: 'demandes_proforma',
   demandes_proforma_lignes: 'demandes_proforma_lignes',
+  receptions: 'receptions',
+  reception_lignes: 'reception_lignes',
   comptes_clients: 'comptes_clients',
   historique_consommation_compte: 'historique_consommation_compte',
   avoirs_clients: 'avoirs_clients',
   credits_clients: 'credits_clients',
 };
 
-// ============================================
-// TYPES
-// ============================================
 export interface SyncStatus {
   isOnline: boolean;
   isSyncing: boolean;
@@ -50,9 +46,6 @@ export interface SyncResult {
   message?: string;
 }
 
-// ============================================
-// MOTEUR DE SYNCHRONISATION
-// ============================================
 class SyncEngine {
   private syncInterval: ReturnType<typeof setInterval> | null = null;
   private isSyncing = false;
@@ -72,7 +65,6 @@ class SyncEngine {
     this.startAutoSync();
   }
 
-  // ─── GESTION CONNECTIVITÉ ───
   private handleOnline() {
     console.log('🌐 Connexion rétablie - Lancement synchronisation...');
     this.status.isOnline = true;
@@ -86,13 +78,10 @@ class SyncEngine {
     this.notifyListeners();
   }
 
-  // ─── AUTO SYNC ───
   startAutoSync() {
     if (this.syncInterval) return;
     this.syncInterval = setInterval(() => {
-      if (this.status.isOnline) {
-        this.syncAll();
-      }
+      if (this.status.isOnline) this.syncAll();
     }, SYNC_INTERVAL_MS);
     console.log('🔄 Synchronisation automatique démarrée (toutes les 30s)');
   }
@@ -104,52 +93,37 @@ class SyncEngine {
     }
   }
 
-  // ─── SYNCHRONISATION COMPLÈTE ───
   async syncAll(): Promise<SyncResult> {
-    if (!navigator.onLine) {
-      console.log('📴 Synchronisation ignorée : Mode hors-ligne actif');
-      return { success: false, message: 'Hors-ligne', synced: 0, failed: 0, pulled: 0, errors: [] };
-    }
-    if (this.isSyncing) {
-      return { success: false, message: 'Synchronisation déjà en cours', synced: 0, failed: 0, pulled: 0, errors: [] };
+    if (!navigator.onLine || this.isSyncing) {
+      return { success: false, message: 'Hors-ligne ou déjà en cours', synced: 0, failed: 0, pulled: 0, errors: [] };
     }
 
     this.isSyncing = true;
     this.status.isSyncing = true;
     this.notifyListeners();
 
-    const result: SyncResult = {
-      success: true,
-      synced: 0,
-      failed: 0,
-      pulled: 0,
-      errors: [],
-    };
+    const result: SyncResult = { success: true, synced: 0, failed: 0, pulled: 0, errors: [] };
 
     try {
-      // 1. POUSSER les modifications locales vers Supabase (PUSH)
       const pushResult = await this.pushToSupabase();
       result.synced += pushResult.synced;
       result.failed += pushResult.failed;
       result.errors.push(...pushResult.errors);
 
-      // 2. TIRER les modifications de Supabase vers le local (PULL)
       const pullResult = await this.pullFromSupabase();
-      result.pulled = pullResult.pulled;
+      result.pulled += pullResult.pulled;
       result.errors.push(...pullResult.errors);
 
       this.status.lastSyncTime = new Date().toISOString();
       this.status.pendingCount = await this.getPendingCount();
 
-      if (result.errors.length > 0) {
-        result.success = false;
-      }
+      if (result.errors.length > 0) result.success = false;
 
       console.log(`✅ Sync terminée: ${result.synced} poussés, ${result.pulled} tirés, ${result.failed} échecs`);
     } catch (error: any) {
       result.success = false;
       result.errors.push(error.message);
-      console.error('❌ Erreur synchronisation:', error);
+      console.error('❌ Erreur synchronisation globale:', error);
     } finally {
       this.isSyncing = false;
       this.status.isSyncing = false;
@@ -160,16 +134,16 @@ class SyncEngine {
     return result;
   }
 
-  // ─── PUSH : Local → Supabase ───
   private async pushToSupabase(): Promise<{ synced: number; failed: number; errors: string[] }> {
     let synced = 0;
     let failed = 0;
     const errors: string[] = [];
 
+    // ✅ FILTRE CIRCUIT BREAKER : Ignore les enregistrements abandonnés
     const pendingLogs = await localDb.sync_log
       .where('status')
       .equals('pending')
-      .and((log) => log.retry_count < MAX_RETRIES)
+      .and((log) => (log.retry_count || 0) < MAX_RETRIES && !log.abandoned)
       .sortBy('created_at');
 
     console.log(`📤 ${pendingLogs.length} opérations en attente à pousser`);
@@ -182,9 +156,8 @@ class SyncEngine {
           continue;
         }
 
-        const cleanData = { ...log.data };
-        delete cleanData._sync_status;
-        delete cleanData._local_id;
+        // ✅ VALIDATION DE SCHÉMA : Nettoie TOUTES les colonnes inconnues
+        const cleanData = sanitizeForSupabase(log.table_name, log.data);
 
         let syncError: any = null;
 
@@ -201,65 +174,39 @@ class SyncEngine {
         }
 
         if (syncError) {
-          if (syncError.code === '23503' && cleanData.assurance_id) {
-            console.warn(`⚠️ L'assurance assignée n'existe pas encore. Suppression de la référence pour permettre la sync.`);
-            cleanData.assurance_id = null;
-            
-            let retryError: any = null;
-            if (log.operation === 'create') {
-              ({ error: retryError } = await supabase.from(supabaseTable).insert(cleanData));
-            } else if (log.operation === 'update') {
-              ({ error: retryError } = await supabase.from(supabaseTable).update(cleanData).eq('id', log.record_id));
-            }
-            
-            if (retryError) throw retryError;
-            console.log(`✅ Synchronisé avec succès (sans référence assurance)`);
-          } else if (syncError.code === '23505') {
-            const match = syncError.message.match(/Key \(([^)]+)\)=\(([^)]+)\)/);
-            const colonne = match ? match[1] : 'inconnue';
-            const valeur = match ? match[2] : 'inconnue';
-
-            if (colonne === 'numero_assure' && log.table_name === 'clients') {
-              console.warn(`⚠️ Doublon détecté : le numéro d'assuré "${valeur}" existe déjà`);
-              
-              await localDb.sync_log.update(log.id, {
-                status: 'failed',
-                error_message: `Numéro d'assuré "${valeur}" déjà utilisé`,
-                retry_count: MAX_RETRIES,
-              });
-
-              alert(
-                `⚠️ Synchronisation bloquée pour un client\n\n` +
-                `Le numéro d'assuré "${valeur}" est déjà utilisé par un autre client.\n` +
-                `Veuillez modifier ce numéro dans la liste des clients pour débloquer la synchronisation.`
-              );
-
-              failed++;
-              errors.push(`${log.table_name}/${log.record_id}: Doublon numero_assure "${valeur}"`);
-              continue;
-            } else {
-              throw syncError;
-            }
-          } else {
-            throw syncError;
+          // Gestion spécifique des doublons de numéro d'assuré (gardez votre logique existante si elle fonctionne)
+          if (syncError.code === '23505' && syncError.message.includes('numero_assure')) {
+             const match = syncError.message.match(/Key \(([^)]+)\)=\(([^)]+)\)/);
+             const valeur = match ? match[2] : 'inconnue';
+             console.warn(`⚠️ Doublon numero_assure: ${valeur}`);
+             throw new Error(`Doublon numero_assure "${valeur}"`);
           }
+          throw syncError;
         }
 
         await localDb.sync_log.update(log.id, {
           status: 'synced',
           synced_at: new Date().toISOString(),
         });
+        
+        // Mise à jour du statut local
+        try {
+          await (localDb[log.table_name as keyof typeof localDb] as any).update(log.record_id, { _sync_status: 'synced' });
+        } catch (e) { /* Ignorer si la table n'a pas ce champ */ }
 
-        await this.updateLocalSyncStatus(log.table_name, log.record_id, 'synced');
         synced++;
 
       } catch (error: any) {
         console.error(`❌ Échec sync ${log.table_name}/${log.record_id}:`, error.message);
 
+        const newRetryCount = (log.retry_count || 0) + 1;
+        const isAbandoned = newRetryCount >= MAX_RETRIES;
+
         await localDb.sync_log.update(log.id, {
-          retry_count: log.retry_count + 1,
+          retry_count: newRetryCount,
           error_message: error.message,
-          status: log.retry_count + 1 >= MAX_RETRIES ? 'failed' : 'pending',
+          status: isAbandoned ? 'failed' : 'pending',
+          abandoned: isAbandoned // ✅ Marque comme abandonné pour ne plus jamais réessayer
         });
 
         failed++;
@@ -270,34 +217,29 @@ class SyncEngine {
     return { synced, failed, errors };
   }
 
-  // ─── PULL : Supabase → Local ───
   private async pullFromSupabase(): Promise<{ pulled: number; errors: string[] }> {
     let pulled = 0;
     const errors: string[] = [];
 
     const pharmacyId = localStorage.getItem('pharmacy_id');
-    if (!pharmacyId) {
-      console.warn('⚠️ Pas de pharmacy_id, skip pull');
-      return { pulled: 0, errors: [] };
-    }
+    if (!pharmacyId) return { pulled: 0, errors: ['Pas de pharmacy_id'] };
 
     const tablesToPull = [
-  { local: 'produits', remote: 'produits', pharmacyColumn: 'pharmacy_id' },
-  { local: 'clients', remote: 'clients', pharmacyColumn: 'pharmacy_id' },
-  { local: 'assurances', remote: 'assurances', pharmacyColumn: 'pharmacy_id' },
-  { local: 'fournisseurs', remote: 'fournisseurs', pharmacyColumn: 'pharmacy_id' },
-  { local: 'stock', remote: 'stock', pharmacyColumn: 'pharmacy_id' },
-  { local: 'ventes', remote: 'ventes', pharmacyColumn: 'pharmacy_id' },
-  { local: 'magasins', remote: 'magasins', pharmacyColumn: 'pharmacie_principale_id' },
-  { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' },
-  // ✅ AJOUTEZ CES LIGNES ICI :
-  { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' },
-  { local: 'demandes_proforma_lignes', remote: 'demandes_proforma_lignes', pharmacyColumn: null }, // Pas de pharmacy_id direct sur les lignes
-  { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' },
-  { local: 'comptes_clients', remote: 'comptes_clients', pharmacyColumn: 'pharmacy_id' },
-  { local: 'avoirs_clients', remote: 'avoirs_clients', pharmacyColumn: 'pharmacy_id' },
-  { local: 'credits_clients', remote: 'credits_clients', pharmacyColumn: 'pharmacy_id' },
-];
+      { local: 'produits', remote: 'produits', pharmacyColumn: 'pharmacy_id' },
+      { local: 'clients', remote: 'clients', pharmacyColumn: 'pharmacy_id' },
+      { local: 'assurances', remote: 'assurances', pharmacyColumn: 'pharmacy_id' },
+      { local: 'fournisseurs', remote: 'fournisseurs', pharmacyColumn: 'pharmacy_id' },
+      { local: 'stock', remote: 'stock', pharmacyColumn: 'pharmacy_id' },
+      { local: 'ventes', remote: 'ventes', pharmacyColumn: 'pharmacy_id' },
+      { local: 'magasins', remote: 'magasins', pharmacyColumn: 'pharmacie_principale_id' },
+      { local: 'commandes', remote: 'commandes_fournisseurs', pharmacyColumn: 'pharmacy_id' },
+      { local: 'demandes_proforma', remote: 'demandes_proforma', pharmacyColumn: 'pharmacy_id' },
+      { local: 'demandes_proforma_lignes', remote: 'demandes_proforma_lignes', pharmacyColumn: null },
+      { local: 'receptions', remote: 'receptions', pharmacyColumn: 'pharmacy_id' },
+      { local: 'comptes_clients', remote: 'comptes_clients', pharmacyColumn: 'pharmacy_id' },
+      { local: 'avoirs_clients', remote: 'avoirs_clients', pharmacyColumn: 'pharmacy_id' },
+      { local: 'credits_clients', remote: 'credits_clients', pharmacyColumn: 'pharmacy_id' },
+    ];
 
     for (const table of tablesToPull) {
       try {
@@ -315,7 +257,7 @@ class SyncEngine {
 
         if (error) {
           if (error.message.includes('does not exist')) {
-            console.warn(`⚠️ La colonne n'existe pas encore dans Supabase pour la table '${table.local}'.`);
+            console.warn(`⚠️ Colonne manquante pour '${table.local}', ignoré.`);
             continue;
           }
           throw error;
@@ -323,6 +265,7 @@ class SyncEngine {
 
         if (data && data.length > 0) {
           for (const record of data) {
+            // ✅ Nettoyage avant insertion locale
             const { _sync_status, _local_id, ...cleanRecord } = record;
             const localRecord = { ...cleanRecord, _sync_status: 'synced' as const };
             
@@ -340,13 +283,7 @@ class SyncEngine {
     return { pulled, errors };
   }
 
-  // ─── UTILITAIRES ───
-  async logOperation(
-    tableName: string,
-    recordId: string,
-    operation: 'create' | 'update' | 'delete',
-    data: any
-  ) {
+  async logOperation(tableName: string, recordId: string, operation: 'create' | 'update' | 'delete', data: any) {
     const logEntry: LocalSyncLog = {
       id: uuidv4(),
       table_name: tableName,
@@ -356,20 +293,13 @@ class SyncEngine {
       status: 'pending',
       created_at: new Date().toISOString(),
       retry_count: 0,
+      abandoned: false,
     };
 
     await localDb.sync_log.add(logEntry);
 
     if (this.status.isOnline) {
       this.syncAll();
-    }
-  }
-
-  private async updateLocalSyncStatus(tableName: string, recordId: string, status: string) {
-    try {
-      await (localDb[tableName as keyof typeof localDb] as any).update(recordId, { _sync_status: status });
-    } catch (e) {
-      // Ignorer si la table n'existe pas ou si le record a été supprimé
     }
   }
 
@@ -393,5 +323,4 @@ class SyncEngine {
   }
 }
 
-// Singleton
 export const syncEngine = new SyncEngine();

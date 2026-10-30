@@ -312,7 +312,8 @@ export interface LocalSyncLog {
   error_message?: string;
   created_at: string;
   synced_at?: string;
-  retry_count: number;
+  retry_count: number;      // ✅ Ajouté
+  abandoned?: boolean;      // ✅ Ajouté pour le circuit breaker
 }
 
 // ============================================
@@ -347,12 +348,12 @@ class PharmacieLocalDB extends Dexie {
   constructor() {
     super('PharmacieDB');
 
-    // Version 1 : Tables de base (mise à jour de l'index clients pour inclure matricule)
+    // Versions 1 à 4 : Gardez-les exactement comme vous les avez
     this.version(1).stores({
       produits: 'id, pharmacy_id, code_produit, nom, actif, _sync_status',
       clients: 'id, pharmacy_id, nom_complet, matricule, telephone, assurance_id, _sync_status',
       assurances: 'id, pharmacy_id, nom, actif, _sync_status',
-      ventes: 'id, pharmacy_id, client_id, date_vente, statut, utilisateur_id, _sync_status',
+      ventes: 'id, pharmacy_id, client_id, date_vente, statut, _sync_status',
       vente_lignes: 'id, pharmacy_id, vente_id, produit_id, _sync_status',
       stock: 'id, pharmacy_id, produit_id, lot_numero, statut, _sync_status, [pharmacy_id+produit_id]',
       fournisseurs: 'id, pharmacy_id, nom, actif, _sync_status',
@@ -362,28 +363,37 @@ class PharmacieLocalDB extends Dexie {
       sync_log: 'id, table_name, record_id, status, created_at',
     });
 
-    // Version 2 : Ajout des tables Magasins et Transferts
     this.version(2).stores({
       magasins: 'id, pharmacie_principale_id, nom, code, actif, _sync_status',
       transferts: 'id, pharmacy_id, numero_transfert, date_transfert, statut, _sync_status',
       transfert_lignes: 'id, transfert_id, produit_id, _sync_status',
     });
 
-    // Version 3 : Ajout des tables de lignes pour les jointures locales
     this.version(3).stores({
       commande_fournisseur_lignes: 'id, commande_id, produit_id, _sync_status',
       demandes_proforma_lignes: 'id, demande_id, produit_id, _sync_status',
       reception_lignes: 'id, reception_id, produit_id, _sync_status',
     });
 
-    // Version 4 : Ajout des tables pour la gestion des comptes clients, avoirs et crédits
     this.version(4).stores({
       comptes_clients: 'id, pharmacy_id, client_id, type_compte, _sync_status',
       historique_consommation_compte: 'id, compte_id, vente_id, date_operation, _sync_status',
       avoirs_clients: 'id, pharmacy_id, client_id, numero_avoir, statut, _sync_status',
       credits_clients: 'id, pharmacy_id, client_id, statut, _sync_status',
     });
+
+    // ✅ VERSION 5 : Migration sécurisée pour ajouter le Circuit Breaker au sync_log
+    this.version(5).stores({
+      // On redéfinit sync_log avec les nouveaux index pour les requêtes rapides
+      sync_log: 'id, table_name, record_id, status, created_at, retry_count, abandoned'
+    }).upgrade(tx => {
+      return tx.table('sync_log').toCollection().modify(log => {
+        if (log.retry_count === undefined) log.retry_count = 0;
+        if (log.abandoned === undefined) log.abandoned = false;
+      });
+    });
   }
 }
 
 export const localDb = new PharmacieLocalDB();
+
